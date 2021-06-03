@@ -6,16 +6,16 @@ use crate::dynamics::{BallJoint, FixedJoint, JointHandle, PrismaticJoint, RigidB
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 /// An enum grouping all possible types of joints.
 pub enum JointParams {
-    /// A Ball joint that removes all relative linear degrees of freedom between the affected bodies.
+    /// A Ball joint that removes all relative linear degrees of freedom between two bodies.
     BallJoint(BallJoint),
-    /// A fixed joint that removes all relative degrees of freedom between the affected bodies.
+    /// A fixed joint that removes all relative degrees of freedom between two bodies.
     FixedJoint(FixedJoint),
-    /// A prismatic joint that removes all degrees of degrees of freedom between the affected
-    /// bodies except for the translation along one axis.
+    /// A prismatic joint that removes all degrees of freedom between two bodies except for
+    /// translation along one axis.
     PrismaticJoint(PrismaticJoint),
     #[cfg(feature = "dim3")]
-    /// A revolute joint that removes all degrees of degrees of freedom between the affected
-    /// bodies except for the translation along one axis.
+    /// A revolute joint that removes all degrees of freedom between two bodies except for
+    /// rotation along one axis.
     RevoluteJoint(RevoluteJoint),
     // GenericJoint(GenericJoint),
 }
@@ -130,7 +130,7 @@ pub struct Joint {
 }
 
 impl Joint {
-    /// Can this joint use SIMD-accelerated constraint formulations?
+    /// Returns `true` if this joint can use SIMD-accelerated constraint formulations.
     pub fn supports_simd_constraints(&self) -> bool {
         match &self.params {
             JointParams::PrismaticJoint(joint) => joint.supports_simd_constraints(),

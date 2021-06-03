@@ -220,28 +220,23 @@ impl PhysxWorld {
                 if let Some((mut px_shape, px_material, collider_pos)) =
                     physx_collider_from_rapier_collider(&mut *physics, &mut cooking, &collider)
                 {
-                    if let Some(parent_handle) = collider.parent() {
-                        let parent_body = &bodies[parent_handle];
+                    let parent_body = &bodies[collider.parent()];
 
-                        if !parent_body.is_dynamic() {
-                            let actor = rapier2static.get_mut(&parent_handle).unwrap();
-                            actor.attach_shape(&mut px_shape);
-                        } else {
-                            let actor = rapier2dynamic.get_mut(&parent_handle).unwrap();
-                            actor.attach_shape(&mut px_shape);
-                        }
-
-                        unsafe {
-                            let pose = collider_pos.into_physx();
-                            physx_sys::PxShape_setLocalPose_mut(
-                                px_shape.as_mut_ptr(),
-                                &pose.into(),
-                            );
-                        }
-
-                        shapes.push(px_shape);
-                        materials.push(px_material);
+                    if !parent_body.is_dynamic() {
+                        let actor = rapier2static.get_mut(&collider.parent()).unwrap();
+                        actor.attach_shape(&mut px_shape);
+                    } else {
+                        let actor = rapier2dynamic.get_mut(&collider.parent()).unwrap();
+                        actor.attach_shape(&mut px_shape);
                     }
+
+                    unsafe {
+                        let pose = collider_pos.into_physx();
+                        physx_sys::PxShape_setLocalPose_mut(px_shape.as_mut_ptr(), &pose.into());
+                    }
+
+                    shapes.push(px_shape);
+                    materials.push(px_material);
                 }
             }
 
@@ -459,8 +454,8 @@ impl PhysxWorld {
                         }
                     }
                     JointParams::FixedJoint(params) => {
-                        let frame1 = params.local_frame1.into_physx().into();
-                        let frame2 = params.local_frame2.into_physx().into();
+                        let frame1 = params.local_anchor1.into_physx().into();
+                        let frame2 = params.local_anchor2.into_physx().into();
 
                         physx_sys::phys_PxFixedJointCreate(
                             physics.as_mut_ptr(),
@@ -505,9 +500,7 @@ impl PhysxWorld {
 
             for coll_handle in rb.colliders() {
                 let collider = &mut colliders[*coll_handle];
-                collider.set_position(
-                    pos * collider.position_wrt_parent().copied().unwrap_or(na::one()),
-                );
+                collider.set_position_debug(pos * collider.position_wrt_parent());
             }
         }
     }
@@ -518,7 +511,7 @@ fn physx_collider_from_rapier_collider(
     cooking: &PxCooking,
     collider: &Collider,
 ) -> Option<(Owner<PxShape>, Owner<PxMaterial>, Isometry3<f32>)> {
-    let mut local_pose = collider.position_wrt_parent().copied().unwrap_or(na::one());
+    let mut local_pose = *collider.position_wrt_parent();
     let shape = collider.shape();
     let shape_flags = if collider.is_sensor() {
         ShapeFlag::TriggerShape.into()
@@ -527,9 +520,9 @@ fn physx_collider_from_rapier_collider(
     };
     let mut material = physics
         .create_material(
-            collider.material().friction,
-            collider.material().friction,
-            collider.material().restitution,
+            collider.friction,
+            collider.friction,
+            collider.restitution,
             (),
         )
         .unwrap();

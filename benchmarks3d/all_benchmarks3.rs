@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 
+extern crate nalgebra as na;
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use inflector::Inflector;
 
-use rapier_testbed3d::{Testbed, TestbedApp};
+use rapier_testbed3d::Testbed;
 use std::cmp::Ordering;
 
 mod balls3;
@@ -78,12 +80,12 @@ pub fn main() {
                 .iter()
                 .position(|builder| builder.0.to_camel_case().as_str() == demo.as_str())
             {
-                TestbedApp::from_builders(0, vec![builders[i]]).run()
+                Testbed::from_builders(0, vec![builders[i]]).run()
             } else {
                 eprintln!("Invalid example to run provided: '{}'", demo);
             }
         }
-        Command::RunAll => TestbedApp::from_builders(0, builders).run(),
+        Command::RunAll => Testbed::from_builders(0, builders).run(),
         Command::List => {
             for builder in &builders {
                 println!("{}", builder.0.to_camel_case())

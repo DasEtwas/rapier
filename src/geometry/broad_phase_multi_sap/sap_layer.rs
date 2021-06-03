@@ -1,6 +1,6 @@
 use super::{SAPProxies, SAPProxy, SAPRegion, SAPRegionPool};
 use crate::geometry::broad_phase_multi_sap::DELETED_AABB_VALUE;
-use crate::geometry::{SAPProxyIndex, AABB};
+use crate::geometry::{Collider, SAPProxyIndex, AABB};
 use crate::math::{Point, Real};
 use parry::utils::hashmap::{Entry, HashMap};
 
@@ -14,7 +14,8 @@ pub(crate) struct SAPLayer {
     region_width: Real,
     pub regions: HashMap<Point<i32>, SAPProxyIndex>,
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
-    regions_to_potentially_remove: Vec<Point<i32>>, // Workspace
+    // Workspace
+    regions_to_potentially_remove: Vec<Point<i32>>,
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
     pub created_regions: Vec<SAPProxyIndex>,
 }
@@ -120,7 +121,7 @@ impl SAPLayer {
                     .as_region_mut()
                     .id_in_parent_subregion = id_in_parent_subregion as u32;
             } else {
-                // NOTE: all the following are just assertions to make sure the
+                // NOTE: All the following are just assertions to make sure the
                 // region ids are correctly wired. If this piece of code causes
                 // any performance problem, it can be deleted completely without
                 // hesitation.
@@ -213,11 +214,12 @@ impl SAPLayer {
 
     pub fn preupdate_collider(
         &mut self,
-        proxy_id: u32,
+        collider: &Collider,
         aabb: &AABB,
         proxies: &mut SAPProxies,
         pool: &mut SAPRegionPool,
     ) {
+        let proxy_id = collider.proxy_index;
         let start = super::point_key(aabb.mins, self.region_width);
         let end = super::point_key(aabb.maxs, self.region_width);
 

@@ -1,5 +1,5 @@
 use super::AnyPositionConstraint;
-use crate::dynamics::{IntegrationParameters, RigidBodyIds, RigidBodyMassProps, RigidBodyPosition};
+use crate::dynamics::{IntegrationParameters, RigidBodySet};
 use crate::geometry::ContactManifold;
 use crate::math::{
     AngularInertia, Isometry, Point, Real, Rotation, SimdReal, Translation, Vector,
@@ -7,13 +7,12 @@ use crate::math::{
 };
 use crate::utils::{WAngularInertia, WCross, WDot};
 
-use crate::data::ComponentSet;
 use num::Zero;
 use simba::simd::{SimdBool as _, SimdPartialOrd, SimdValue};
 
 pub(crate) struct WPositionGroundConstraint {
     pub rb2: [usize; SIMD_WIDTH],
-    // NOTE: the points are relative to the center of masses.
+    // NOTE: The points are relative to the center of masses.
     pub p1: [Point<SimdReal>; MAX_MANIFOLD_POINTS],
     pub local_p2: [Point<SimdReal>; MAX_MANIFOLD_POINTS],
     pub dists: [SimdReal; MAX_MANIFOLD_POINTS],
@@ -26,51 +25,42 @@ pub(crate) struct WPositionGroundConstraint {
 }
 
 impl WPositionGroundConstraint {
-    pub fn generate<Bodies>(
+    pub fn generate(
         params: &IntegrationParameters,
         manifolds: [&ContactManifold; SIMD_WIDTH],
-        bodies: &Bodies,
+        bodies: &RigidBodySet,
         out_constraints: &mut Vec<AnyPositionConstraint>,
         push: bool,
-    ) where
-        Bodies: ComponentSet<RigidBodyIds>
-            + ComponentSet<RigidBodyPosition>
-            + ComponentSet<RigidBodyMassProps>,
-    {
-        let mut handles1 = gather![|ii| manifolds[ii].data.rigid_body1];
-        let mut handles2 = gather![|ii| manifolds[ii].data.rigid_body2];
+    ) {
+        let mut rbs1 =
+            array![|ii| bodies.get(manifolds[ii].data.body_pair.body1).unwrap(); SIMD_WIDTH];
+        let mut rbs2 =
+            array![|ii| bodies.get(manifolds[ii].data.body_pair.body2).unwrap(); SIMD_WIDTH];
         let mut flipped = [false; SIMD_WIDTH];
 
         for ii in 0..SIMD_WIDTH {
             if manifolds[ii].data.relative_dominance < 0 {
                 flipped[ii] = true;
-                std::mem::swap(&mut handles1[ii], &mut handles2[ii]);
+                std::mem::swap(&mut rbs1[ii], &mut rbs2[ii]);
             }
         }
 
-        let poss2: [&RigidBodyPosition; SIMD_WIDTH] =
-            gather![|ii| bodies.index(handles2[ii].unwrap().0)];
-        let ids2: [&RigidBodyIds; SIMD_WIDTH] = gather![|ii| bodies.index(handles2[ii].unwrap().0)];
-        let mprops2: [&RigidBodyMassProps; SIMD_WIDTH] =
-            gather![|ii| bodies.index(handles2[ii].unwrap().0)];
+        let im2 = SimdReal::from(array![|ii| rbs2[ii].effective_inv_mass; SIMD_WIDTH]);
+        let sqrt_ii2: AngularInertia<SimdReal> = AngularInertia::from(
+            array![|ii| rbs2[ii].effective_world_inv_inertia_sqrt; SIMD_WIDTH],
+        );
 
-        let im2 = SimdReal::from(gather![|ii| mprops2[ii].effective_inv_mass]);
-        let sqrt_ii2: AngularInertia<SimdReal> =
-            AngularInertia::from(gather![|ii| mprops2[ii].effective_world_inv_inertia_sqrt]);
+        let n1 = Vector::from(
+            array![|ii| if flipped[ii] { -manifolds[ii].data.normal } else { manifolds[ii].data.normal }; SIMD_WIDTH],
+        );
 
-        let n1 = Vector::from(gather![|ii| if flipped[ii] {
-            -manifolds[ii].data.normal
-        } else {
-            manifolds[ii].data.normal
-        }]);
-
-        let pos2 = Isometry::from(gather![|ii| poss2[ii].position]);
-        let rb2 = gather![|ii| ids2[ii].active_set_offset];
+        let pos2 = Isometry::from(array![|ii| rbs2[ii].position; SIMD_WIDTH]);
+        let rb2 = array![|ii| rbs2[ii].active_set_offset; SIMD_WIDTH];
 
         let num_active_contacts = manifolds[0].data.num_active_contacts();
 
         for l in (0..num_active_contacts).step_by(MAX_MANIFOLD_POINTS) {
-            let manifold_points = gather![|ii| &manifolds[ii].data.solver_contacts[l..]];
+            let manifold_points = array![|ii| &manifolds[ii].data.solver_contacts[l..]; SIMD_WIDTH];
             let num_points = manifold_points[0].len().min(MAX_MANIFOLD_POINTS);
 
             let mut constraint = WPositionGroundConstraint {
@@ -87,8 +77,8 @@ impl WPositionGroundConstraint {
             };
 
             for i in 0..num_points {
-                let point = Point::from(gather![|ii| manifold_points[ii][i].point]);
-                let dist = SimdReal::from(gather![|ii| manifold_points[ii][i].dist]);
+                let point = Point::from(array![|ii| manifold_points[ii][i].point; SIMD_WIDTH]);
+                let dist = SimdReal::from(array![|ii| manifold_points[ii][i].dist; SIMD_WIDTH]);
                 constraint.p1[i] = point;
                 constraint.local_p2[i] = pos2.inverse_transform_point(&point);
                 constraint.dists[i] = dist;
@@ -106,7 +96,7 @@ impl WPositionGroundConstraint {
     pub fn solve(&self, params: &IntegrationParameters, positions: &mut [Isometry<Real>]) {
         // FIXME: can we avoid most of the multiplications by pos1/pos2?
         // Compute jacobians.
-        let mut pos2 = Isometry::from(gather![|ii| positions[self.rb2[ii]]]);
+        let mut pos2 = Isometry::from(array![|ii| positions[self.rb2[ii]]; SIMD_WIDTH]);
         let allowed_err = SimdReal::splat(params.allowed_linear_error);
 
         for k in 0..self.num_contacts as usize {
@@ -117,7 +107,7 @@ impl WPositionGroundConstraint {
             let dpos = p2 - p1;
             let dist = dpos.dot(&n1);
 
-            // NOTE: this condition does not seem to be useful perfomancewise?
+            // NOTE: this condition does not seem to be useful perfomance-wise?
             if dist.simd_lt(target_dist).any() {
                 let err = ((dist - target_dist) * self.erp)
                     .simd_clamp(-self.max_linear_correction, SimdReal::zero());

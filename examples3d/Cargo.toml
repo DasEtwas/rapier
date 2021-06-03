@@ -16,8 +16,8 @@ enhanced-determinism = [ "rapier3d/enhanced-determinism" ]
 rand = "0.8"
 getrandom = { version = "0.2", features = [ "js" ] } 
 Inflector  = "0.11"
-wasm-bindgen = "0.2"
-obj-rs = { version =  "0.6", default-features = false }
+nalgebra   = "0.26"
+kiss3d     = "0.31"
 
 [dependencies.rapier_testbed3d]
 path = "../build/rapier_testbed3d"
@@ -32,8 +32,3 @@ path = "./all_examples3.rs"
 [[bin]]
 name = "harness_capsules3"
 path = "./harness_capsules3.rs"
-
-#[lib]
-#crate-type = ["cdylib", "rlib"]
-#path = "./all_examples3_wasm.rs"
-

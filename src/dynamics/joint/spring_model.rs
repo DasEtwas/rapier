@@ -9,9 +9,9 @@ pub enum SpringModel {
     /// The solved spring-like equation is:
     /// `delta_velocity(t + dt) = stiffness / dt * (target_pos - pos(t)) + damping * (target_vel - vel(t))`
     ///
-    /// Here the `stiffness` is the ratio of position error to be solved at each timestep (like
-    /// a velocity-based ERP), and the `damping` is the ratio of velocity error to be solved at
-    /// each timestep.
+    /// * `stiffness` is the factor of position error to be solved at each timestep (like
+    ///   a velocity-based Error Reduction Parameter ERP).
+    /// * `damping` is the factor of velocity error to be solved at each timestep.
     VelocityBased,
     /// The solved spring-like equation is:
     /// `acceleration(t + dt) = stiffness * (target_pos - pos(t)) + damping * (target_vel - vel(t))`

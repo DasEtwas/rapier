@@ -14,20 +14,20 @@ mod solver_counters;
 mod stages_counters;
 mod timer;
 
-/// Aggregation of all the performances counters tracked by nphysics.
+/// Aggregation of all the performance counters tracked by Rapier.
 #[derive(Clone, Copy)]
 pub struct Counters {
-    /// Whether thi counter is enabled or not.
+    /// Whether this counter is enabled or not.
     pub enabled: bool,
     /// Timer for a whole timestep.
     pub step_time: Timer,
     /// Timer used for debugging.
     pub custom: Timer,
-    /// Counters of every satge of one time step.
+    /// Counters for every stage of one time step.
     pub stages: StagesCounters,
-    /// Counters of the collision-detection stage.
+    /// Counters for the collision-detection stage.
     pub cd: CollisionDetectionCounters,
-    /// Counters of the constraints resolution and force computation stage.
+    /// Counters for the constraints resolution and force computation stage.
     pub solver: SolverCounters,
     /// Counters for the CCD resolution stage.
     pub ccd: CCDCounters,
@@ -88,7 +88,7 @@ impl Counters {
         }
     }
 
-    /// Notfy that the custom operation has finished.
+    /// Notify that the custom operation has finished.
     pub fn custom_completed(&mut self) {
         if self.enabled {
             self.custom.pause();

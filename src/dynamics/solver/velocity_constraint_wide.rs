@@ -1,8 +1,7 @@
 use super::{
     AnyVelocityConstraint, DeltaVel, VelocityConstraintElement, VelocityConstraintNormalPart,
 };
-use crate::data::ComponentSet;
-use crate::dynamics::{IntegrationParameters, RigidBodyIds, RigidBodyMassProps, RigidBodyVelocity};
+use crate::dynamics::{IntegrationParameters, RigidBodySet};
 use crate::geometry::{ContactManifold, ContactManifoldIndex};
 use crate::math::{
     AngVector, AngularInertia, Point, Real, SimdReal, Vector, DIM, MAX_MANIFOLD_POINTS, SIMD_WIDTH,
@@ -16,11 +15,14 @@ use simba::simd::{SimdPartialOrd, SimdValue};
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct WVelocityConstraint {
-    pub dir1: Vector<SimdReal>, // Non-penetration force direction for the first body.
+    // Non-penetration force direction for the first body.
+    pub dir1: Vector<SimdReal>,
     #[cfg(feature = "dim3")]
-    pub tangent1: Vector<SimdReal>, // One of the friction force directions.
+    // One of the friction force directions.
+    pub tangent1: Vector<SimdReal>,
     #[cfg(feature = "dim3")]
-    pub tangent_rot1: na::UnitComplex<SimdReal>, // Orientation of the tangent basis wrt. the reference basis.
+    // Orientation of the tangent basis wrt. the reference basis.
+    pub tangent_rot1: na::UnitComplex<SimdReal>,
     pub elements: [VelocityConstraintElement<SimdReal>; MAX_MANIFOLD_POINTS],
     pub num_contacts: u8,
     pub im1: SimdReal,
@@ -33,18 +35,14 @@ pub(crate) struct WVelocityConstraint {
 }
 
 impl WVelocityConstraint {
-    pub fn generate<Bodies>(
+    pub fn generate(
         params: &IntegrationParameters,
         manifold_id: [ContactManifoldIndex; SIMD_WIDTH],
         manifolds: [&ContactManifold; SIMD_WIDTH],
-        bodies: &Bodies,
+        bodies: &RigidBodySet,
         out_constraints: &mut Vec<AnyVelocityConstraint>,
         push: bool,
-    ) where
-        Bodies: ComponentSet<RigidBodyIds>
-            + ComponentSet<RigidBodyVelocity>
-            + ComponentSet<RigidBodyMassProps>,
-    {
+    ) {
         for ii in 0..SIMD_WIDTH {
             assert_eq!(manifolds[ii].data.relative_dominance, 0);
         }
@@ -54,39 +52,36 @@ impl WVelocityConstraint {
         let velocity_solve_fraction = SimdReal::splat(params.velocity_solve_fraction);
         let velocity_based_erp_inv_dt = SimdReal::splat(params.velocity_based_erp_inv_dt());
 
-        let handles1 = gather![|ii| manifolds[ii].data.rigid_body1.unwrap()];
-        let handles2 = gather![|ii| manifolds[ii].data.rigid_body2.unwrap()];
+        let rbs1 = array![|ii| &bodies[manifolds[ii].data.body_pair.body1]; SIMD_WIDTH];
+        let rbs2 = array![|ii| &bodies[manifolds[ii].data.body_pair.body2]; SIMD_WIDTH];
 
-        let vels1: [&RigidBodyVelocity; SIMD_WIDTH] = gather![|ii| bodies.index(handles1[ii].0)];
-        let vels2: [&RigidBodyVelocity; SIMD_WIDTH] = gather![|ii| bodies.index(handles2[ii].0)];
-        let ids1: [&RigidBodyIds; SIMD_WIDTH] = gather![|ii| bodies.index(handles1[ii].0)];
-        let ids2: [&RigidBodyIds; SIMD_WIDTH] = gather![|ii| bodies.index(handles2[ii].0)];
-        let mprops1: [&RigidBodyMassProps; SIMD_WIDTH] = gather![|ii| bodies.index(handles1[ii].0)];
-        let mprops2: [&RigidBodyMassProps; SIMD_WIDTH] = gather![|ii| bodies.index(handles2[ii].0)];
+        let im1 = SimdReal::from(array![|ii| rbs1[ii].effective_inv_mass; SIMD_WIDTH]);
+        let ii1: AngularInertia<SimdReal> = AngularInertia::from(
+            array![|ii| rbs1[ii].effective_world_inv_inertia_sqrt; SIMD_WIDTH],
+        );
 
-        let world_com1 = Point::from(gather![|ii| mprops1[ii].world_com]);
-        let im1 = SimdReal::from(gather![|ii| mprops1[ii].effective_inv_mass]);
-        let ii1: AngularInertia<SimdReal> =
-            AngularInertia::from(gather![|ii| mprops1[ii].effective_world_inv_inertia_sqrt]);
+        let linvel1 = Vector::from(array![|ii| rbs1[ii].linvel; SIMD_WIDTH]);
+        let angvel1 = AngVector::<SimdReal>::from(array![|ii| rbs1[ii].angvel; SIMD_WIDTH]);
 
-        let linvel1 = Vector::from(gather![|ii| vels1[ii].linvel]);
-        let angvel1 = AngVector::<SimdReal>::from(gather![|ii| vels1[ii].angvel]);
+        let world_com1 = Point::from(array![|ii| rbs1[ii].world_com; SIMD_WIDTH]);
 
-        let world_com2 = Point::from(gather![|ii| mprops2[ii].world_com]);
-        let im2 = SimdReal::from(gather![|ii| mprops2[ii].effective_inv_mass]);
-        let ii2: AngularInertia<SimdReal> =
-            AngularInertia::from(gather![|ii| mprops2[ii].effective_world_inv_inertia_sqrt]);
+        let im2 = SimdReal::from(array![|ii| rbs2[ii].effective_inv_mass; SIMD_WIDTH]);
+        let ii2: AngularInertia<SimdReal> = AngularInertia::from(
+            array![|ii| rbs2[ii].effective_world_inv_inertia_sqrt; SIMD_WIDTH],
+        );
 
-        let linvel2 = Vector::from(gather![|ii| vels2[ii].linvel]);
-        let angvel2 = AngVector::<SimdReal>::from(gather![|ii| vels2[ii].angvel]);
+        let linvel2 = Vector::from(array![|ii| rbs2[ii].linvel; SIMD_WIDTH]);
+        let angvel2 = AngVector::<SimdReal>::from(array![|ii| rbs2[ii].angvel; SIMD_WIDTH]);
 
-        let force_dir1 = -Vector::from(gather![|ii| manifolds[ii].data.normal]);
+        let world_com2 = Point::from(array![|ii| rbs2[ii].world_com; SIMD_WIDTH]);
 
-        let mj_lambda1 = gather![|ii| ids1[ii].active_set_offset];
-        let mj_lambda2 = gather![|ii| ids2[ii].active_set_offset];
+        let force_dir1 = -Vector::from(array![|ii| manifolds[ii].data.normal; SIMD_WIDTH]);
+
+        let mj_lambda1 = array![|ii| rbs1[ii].active_set_offset; SIMD_WIDTH];
+        let mj_lambda2 = array![|ii| rbs2[ii].active_set_offset; SIMD_WIDTH];
 
         let warmstart_multiplier =
-            SimdReal::from(gather![|ii| manifolds[ii].data.warmstart_multiplier]);
+            SimdReal::from(array![|ii| manifolds[ii].data.warmstart_multiplier; SIMD_WIDTH]);
         let warmstart_coeff = warmstart_multiplier * SimdReal::splat(params.warmstart_coeff);
         let num_active_contacts = manifolds[0].data.num_active_contacts();
 
@@ -97,8 +92,9 @@ impl WVelocityConstraint {
             super::compute_tangent_contact_directions(&force_dir1, &linvel1, &linvel2);
 
         for l in (0..num_active_contacts).step_by(MAX_MANIFOLD_POINTS) {
-            let manifold_points =
-                gather![|ii| &manifolds[ii].data.solver_contacts[l..num_active_contacts]];
+            let manifold_points = array![|ii|
+                &manifolds[ii].data.solver_contacts[l..num_active_contacts]; SIMD_WIDTH
+            ];
             let num_points = manifold_points[0].len().min(MAX_MANIFOLD_POINTS);
 
             let mut constraint = WVelocityConstraint {
@@ -119,20 +115,24 @@ impl WVelocityConstraint {
             };
 
             for k in 0..num_points {
-                let friction = SimdReal::from(gather![|ii| manifold_points[ii][k].friction]);
-                let restitution = SimdReal::from(gather![|ii| manifold_points[ii][k].restitution]);
-                let is_bouncy = SimdReal::from(gather![
-                    |ii| manifold_points[ii][k].is_bouncy() as u32 as Real
-                ]);
+                let friction =
+                    SimdReal::from(array![|ii| manifold_points[ii][k].friction; SIMD_WIDTH]);
+                let restitution =
+                    SimdReal::from(array![|ii| manifold_points[ii][k].restitution; SIMD_WIDTH]);
+                let is_bouncy = SimdReal::from(
+                    array![|ii| manifold_points[ii][k].is_bouncy() as u32 as Real; SIMD_WIDTH],
+                );
                 let is_resting = SimdReal::splat(1.0) - is_bouncy;
-                let point = Point::from(gather![|ii| manifold_points[ii][k].point]);
-                let dist = SimdReal::from(gather![|ii| manifold_points[ii][k].dist]);
+                let point = Point::from(array![|ii| manifold_points[ii][k].point; SIMD_WIDTH]);
+                let dist = SimdReal::from(array![|ii| manifold_points[ii][k].dist; SIMD_WIDTH]);
                 let tangent_velocity =
-                    Vector::from(gather![|ii| manifold_points[ii][k].tangent_velocity]);
+                    Vector::from(array![|ii| manifold_points[ii][k].tangent_velocity; SIMD_WIDTH]);
 
-                let impulse =
-                    SimdReal::from(gather![|ii| manifold_points[ii][k].warmstart_impulse]);
-                let prev_rhs = SimdReal::from(gather![|ii| manifold_points[ii][k].prev_rhs]);
+                let impulse = SimdReal::from(
+                    array![|ii| manifold_points[ii][k].warmstart_impulse; SIMD_WIDTH],
+                );
+                let prev_rhs =
+                    SimdReal::from(array![|ii| manifold_points[ii][k].prev_rhs; SIMD_WIDTH]);
 
                 let dp1 = point - world_com1;
                 let dp2 = point - world_com2;
@@ -143,7 +143,8 @@ impl WVelocityConstraint {
                 let warmstart_correction;
 
                 constraint.limit = friction;
-                constraint.manifold_contact_id[k] = gather![|ii| manifold_points[ii][k].contact_id];
+                constraint.manifold_contact_id[k] =
+                    array![|ii| manifold_points[ii][k].contact_id; SIMD_WIDTH];
 
                 // Normal part.
                 {
@@ -174,15 +175,15 @@ impl WVelocityConstraint {
 
                 // tangent parts.
                 #[cfg(feature = "dim2")]
-                let impulse = [SimdReal::from(gather![
-                    |ii| manifold_points[ii][k].warmstart_tangent_impulse
-                ]) * warmstart_correction];
+                let impulse = [SimdReal::from(
+                    array![|ii| manifold_points[ii][k].warmstart_tangent_impulse; SIMD_WIDTH],
+                ) * warmstart_correction];
 
                 #[cfg(feature = "dim3")]
                 let impulse = tangent_rot1
-                    * na::Vector2::from(gather![
-                        |ii| manifold_points[ii][k].warmstart_tangent_impulse
-                    ])
+                    * na::Vector2::from(
+                        array![|ii| manifold_points[ii][k].warmstart_tangent_impulse; SIMD_WIDTH],
+                    )
                     * warmstart_correction;
 
                 constraint.elements[k].tangent_part.impulse = impulse;
@@ -212,17 +213,21 @@ impl WVelocityConstraint {
 
     pub fn warmstart(&self, mj_lambdas: &mut [DeltaVel<Real>]) {
         let mut mj_lambda1 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda1[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
 
         let mut mj_lambda2 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
 
         VelocityConstraintElement::warmstart_group(
@@ -248,17 +253,21 @@ impl WVelocityConstraint {
 
     pub fn solve(&mut self, mj_lambdas: &mut [DeltaVel<Real>]) {
         let mut mj_lambda1 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda1[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
 
         let mut mj_lambda2 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[ self.mj_lambda2[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[ self.mj_lambda2[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
 
         VelocityConstraintElement::solve_group(

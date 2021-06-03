@@ -14,7 +14,8 @@ pub struct SAPAxis {
     pub max_bound: Real,
     pub endpoints: Vec<SAPEndpoint>,
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
-    pub new_endpoints: Vec<(SAPEndpoint, usize)>, // Workspace
+    // Workspace
+    pub new_endpoints: Vec<(SAPEndpoint, usize)>,
 }
 
 impl SAPAxis {

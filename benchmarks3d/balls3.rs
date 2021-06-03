@@ -1,4 +1,6 @@
-use rapier3d::prelude::*;
+use na::Point3;
+use rapier3d::dynamics::{BodyStatus, JointSet, RigidBodyBuilder, RigidBodySet};
+use rapier3d::geometry::{ColliderBuilder, ColliderSet};
 use rapier_testbed3d::Testbed;
 
 pub fn init_world(testbed: &mut Testbed) {
@@ -28,19 +30,17 @@ pub fn init_world(testbed: &mut Testbed) {
                 let z = k as f32 * shift - centerz;
 
                 let status = if j == 0 {
-                    RigidBodyType::Static
+                    BodyStatus::Static
                 } else {
-                    RigidBodyType::Dynamic
+                    BodyStatus::Dynamic
                 };
                 let density = 0.477;
 
                 // Build the rigid body.
-                let rigid_body = RigidBodyBuilder::new(status)
-                    .translation(vector![x, y, z])
-                    .build();
+                let rigid_body = RigidBodyBuilder::new(status).translation(x, y, z).build();
                 let handle = bodies.insert(rigid_body);
                 let collider = ColliderBuilder::ball(rad).density(density).build();
-                colliders.insert_with_parent(collider, handle, &mut bodies);
+                colliders.insert(collider, handle, &mut bodies);
             }
         }
     }
@@ -49,5 +49,10 @@ pub fn init_world(testbed: &mut Testbed) {
      * Set up the testbed.
      */
     testbed.set_world(bodies, colliders, joints);
-    testbed.look_at(point![100.0, 100.0, 100.0], Point::origin());
+    testbed.look_at(Point3::new(100.0, 100.0, 100.0), Point3::origin());
+}
+
+fn main() {
+    let testbed = Testbed::from_builders(0, vec![("Balls", init_world)]);
+    testbed.run()
 }

@@ -1,10 +1,8 @@
 use super::{PrismaticPositionConstraint, PrismaticPositionGroundConstraint};
-use crate::dynamics::{
-    IntegrationParameters, PrismaticJoint, RigidBodyIds, RigidBodyMassProps, RigidBodyPosition,
-};
+use crate::dynamics::{IntegrationParameters, PrismaticJoint, RigidBody};
 use crate::math::{Isometry, Real, SIMD_WIDTH};
 
-// TODO: this does not uses SIMD optimizations yet.
+// TODO: Use SIMD optimizations.
 #[derive(Debug)]
 pub(crate) struct WPrismaticPositionConstraint {
     constraints: [PrismaticPositionConstraint; SIMD_WIDTH],
@@ -12,22 +10,12 @@ pub(crate) struct WPrismaticPositionConstraint {
 
 impl WPrismaticPositionConstraint {
     pub fn from_params(
-        rbs1: (
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
-        rbs2: (
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
+        rbs1: [&RigidBody; SIMD_WIDTH],
+        rbs2: [&RigidBody; SIMD_WIDTH],
         cparams: [&PrismaticJoint; SIMD_WIDTH],
     ) -> Self {
         Self {
-            constraints: gather![|ii| PrismaticPositionConstraint::from_params(
-                (rbs1.0[ii], rbs1.1[ii]),
-                (rbs2.0[ii], rbs2.1[ii]),
-                cparams[ii]
-            )],
+            constraints: array![|ii| PrismaticPositionConstraint::from_params(rbs1[ii], rbs2[ii], cparams[ii]); SIMD_WIDTH],
         }
     }
 
@@ -45,21 +33,13 @@ pub(crate) struct WPrismaticPositionGroundConstraint {
 
 impl WPrismaticPositionGroundConstraint {
     pub fn from_params(
-        rbs1: [&RigidBodyPosition; SIMD_WIDTH],
-        rbs2: (
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
+        rbs1: [&RigidBody; SIMD_WIDTH],
+        rbs2: [&RigidBody; SIMD_WIDTH],
         cparams: [&PrismaticJoint; SIMD_WIDTH],
         flipped: [bool; SIMD_WIDTH],
     ) -> Self {
         Self {
-            constraints: gather![|ii| PrismaticPositionGroundConstraint::from_params(
-                rbs1[ii],
-                (rbs2.0[ii], rbs2.1[ii]),
-                cparams[ii],
-                flipped[ii]
-            )],
+            constraints: array![|ii| PrismaticPositionGroundConstraint::from_params(rbs1[ii], rbs2[ii], cparams[ii], flipped[ii]); SIMD_WIDTH],
         }
     }
 

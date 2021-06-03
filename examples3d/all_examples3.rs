@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 
+extern crate nalgebra as na;
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use inflector::Inflector;
 
-use rapier_testbed3d::{Testbed, TestbedApp};
+use rapier_testbed3d::Testbed;
 use std::cmp::Ordering;
 
 mod ccd3;
@@ -23,7 +25,6 @@ mod debug_friction3;
 mod debug_infinite_fall3;
 mod debug_prismatic3;
 mod debug_rollback3;
-mod debug_shape_modification3;
 mod debug_triangle3;
 mod debug_trimesh3;
 mod domino3;
@@ -111,10 +112,6 @@ pub fn main() {
         ("(Debug) infinite fall", debug_infinite_fall3::init_world),
         ("(Debug) prismatic", debug_prismatic3::init_world),
         ("(Debug) rollback", debug_rollback3::init_world),
-        (
-            "(Debug) shape modification",
-            debug_shape_modification3::init_world,
-        ),
     ];
 
     // Lexicographic sort, with stress tests moved at the end of the list.
@@ -129,6 +126,7 @@ pub fn main() {
         .position(|builder| builder.0.to_camel_case().as_str() == demo.as_str())
         .unwrap_or(0);
 
-    let testbed = TestbedApp::from_builders(i, builders);
+    let testbed = Testbed::from_builders(i, builders);
+
     testbed.run()
 }

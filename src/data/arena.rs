@@ -1,6 +1,6 @@
 //! Arena adapted from the generational-arena crate.
 //!
-//! See  https://github.com/fitzgen/generational-arena/blob/master/src/lib.rs.
+//! See <https://github.com/fitzgen/generational-arena/blob/master/src/lib.rs>.
 //! This has been modified to have a fully deterministic deserialization (including for the order of
 //! Index attribution after a deserialization of the arena.
 use parry::partitioning::IndexedData;
@@ -19,16 +19,16 @@ use std::vec;
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 pub struct Arena<T> {
     items: Vec<Entry<T>>,
-    generation: u32,
-    free_list_head: Option<u32>,
+    generation: u64,
+    free_list_head: Option<usize>,
     len: usize,
 }
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 enum Entry<T> {
-    Free { next_free: Option<u32> },
-    Occupied { generation: u32, value: T },
+    Free { next_free: Option<usize> },
+    Occupied { generation: u64, value: T },
 }
 
 /// An index (and generation) into an `Arena`.
@@ -48,17 +48,17 @@ enum Entry<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 pub struct Index {
-    index: u32,
-    generation: u32,
+    index: usize,
+    generation: u64,
 }
 
 impl IndexedData for Index {
     fn default() -> Self {
-        Self::from_raw_parts(crate::INVALID_U32, crate::INVALID_U32)
+        Self::from_raw_parts(crate::INVALID_USIZE, crate::INVALID_U64)
     }
 
     fn index(&self) -> usize {
-        self.into_raw_parts().0 as usize
+        self.into_raw_parts().0
     }
 }
 
@@ -70,7 +70,7 @@ impl Index {
     ///
     /// Providing arbitrary values will lead to malformed indices and ultimately
     /// panics.
-    pub fn from_raw_parts(a: u32, b: u32) -> Index {
+    pub fn from_raw_parts(a: usize, b: u64) -> Index {
         Index {
             index: a,
             generation: b,
@@ -84,7 +84,7 @@ impl Index {
     /// `Index` like `pub struct MyIdentifier(Index);`.  However, for external
     /// types whose definition you can't customize, but which you can construct
     /// instances of, this method can be useful.
-    pub fn into_raw_parts(self) -> (u32, u32) {
+    pub fn into_raw_parts(self) -> (usize, u64) {
         (self.index, self.generation)
     }
 }
@@ -161,7 +161,7 @@ impl<T> Arena<T> {
     pub fn clear(&mut self) {
         self.items.clear();
 
-        let end = self.items.capacity() as u32;
+        let end = self.items.capacity();
         self.items.extend((0..end).map(|i| {
             if i == end - 1 {
                 Entry::Free { next_free: None }
@@ -206,7 +206,7 @@ impl<T> Arena<T> {
         match self.try_alloc_next_index() {
             None => Err(value),
             Some(index) => {
-                self.items[index.index as usize] = Entry::Occupied {
+                self.items[index.index] = Entry::Occupied {
                     generation: self.generation,
                     value,
                 };
@@ -247,7 +247,7 @@ impl<T> Arena<T> {
         match self.try_alloc_next_index() {
             None => Err(create),
             Some(index) => {
-                self.items[index.index as usize] = Entry::Occupied {
+                self.items[index.index] = Entry::Occupied {
                     generation: self.generation,
                     value: create(index),
                 };
@@ -260,13 +260,13 @@ impl<T> Arena<T> {
     fn try_alloc_next_index(&mut self) -> Option<Index> {
         match self.free_list_head {
             None => None,
-            Some(i) => match self.items[i as usize] {
+            Some(i) => match self.items[i] {
                 Entry::Occupied { .. } => panic!("corrupt free list"),
                 Entry::Free { next_free } => {
                     self.free_list_head = next_free;
                     self.len += 1;
                     Some(Index {
-                        index: i as u32,
+                        index: i,
                         generation: self.generation,
                     })
                 }
@@ -355,14 +355,14 @@ impl<T> Arena<T> {
     /// assert_eq!(arena.remove(idx), None);
     /// ```
     pub fn remove(&mut self, i: Index) -> Option<T> {
-        if i.index >= self.items.len() as u32 {
+        if i.index >= self.items.len() {
             return None;
         }
 
-        match self.items[i.index as usize] {
+        match self.items[i.index] {
             Entry::Occupied { generation, .. } if i.generation == generation => {
                 let entry = mem::replace(
-                    &mut self.items[i.index as usize],
+                    &mut self.items[i.index],
                     Entry::Free {
                         next_free: self.free_list_head,
                     },
@@ -402,8 +402,8 @@ impl<T> Arena<T> {
     /// assert!(crew_members.next().is_none());
     /// ```
     pub fn retain(&mut self, mut predicate: impl FnMut(Index, &mut T) -> bool) {
-        for i in 0..self.capacity() as u32 {
-            let remove = match &mut self.items[i as usize] {
+        for i in 0..self.capacity() {
+            let remove = match &mut self.items[i] {
                 Entry::Occupied { generation, value } => {
                     let index = Index {
                         index: i,
@@ -462,7 +462,7 @@ impl<T> Arena<T> {
     /// assert!(arena.get(idx).is_none());
     /// ```
     pub fn get(&self, i: Index) -> Option<&T> {
-        match self.items.get(i.index as usize) {
+        match self.items.get(i.index) {
             Some(Entry::Occupied { generation, value }) if *generation == i.generation => {
                 Some(value)
             }
@@ -488,7 +488,7 @@ impl<T> Arena<T> {
     /// assert!(arena.get_mut(idx).is_none());
     /// ```
     pub fn get_mut(&mut self, i: Index) -> Option<&mut T> {
-        match self.items.get_mut(i.index as usize) {
+        match self.items.get_mut(i.index) {
             Some(Entry::Occupied { generation, value }) if *generation == i.generation => {
                 Some(value)
             }
@@ -526,7 +526,7 @@ impl<T> Arena<T> {
     /// assert_eq!(arena[idx2], 4);
     /// ```
     pub fn get2_mut(&mut self, i1: Index, i2: Index) -> (Option<&mut T>, Option<&mut T>) {
-        let len = self.items.len() as u32;
+        let len = self.items.len();
 
         if i1.index == i2.index {
             assert!(i1.generation != i2.generation);
@@ -544,13 +544,11 @@ impl<T> Arena<T> {
         }
 
         let (raw_item1, raw_item2) = {
-            let (xs, ys) = self
-                .items
-                .split_at_mut(cmp::max(i1.index, i2.index) as usize);
+            let (xs, ys) = self.items.split_at_mut(cmp::max(i1.index, i2.index));
             if i1.index < i2.index {
-                (&mut xs[i1.index as usize], &mut ys[0])
+                (&mut xs[i1.index], &mut ys[0])
             } else {
-                (&mut ys[0], &mut xs[i2.index as usize])
+                (&mut ys[0], &mut xs[i2.index])
             }
         };
 
@@ -668,11 +666,11 @@ impl<T> Arena<T> {
                 }
             } else {
                 Entry::Free {
-                    next_free: Some(i as u32 + 1),
+                    next_free: Some(i + 1),
                 }
             }
         }));
-        self.free_list_head = Some(start as u32);
+        self.free_list_head = Some(start);
     }
 
     /// Iterate over shared references to the elements in this arena.
@@ -770,8 +768,8 @@ impl<T> Arena<T> {
     /// other kinds of bit-efficient indexing.
     ///
     /// You should use the `get` method instead most of the time.
-    pub fn get_unknown_gen(&self, i: u32) -> Option<(&T, Index)> {
-        match self.items.get(i as usize) {
+    pub fn get_unknown_gen(&self, i: usize) -> Option<(&T, Index)> {
+        match self.items.get(i) {
             Some(Entry::Occupied { generation, value }) => Some((
                 value,
                 Index {
@@ -793,8 +791,8 @@ impl<T> Arena<T> {
     /// other kinds of bit-efficient indexing.
     ///
     /// You should use the `get_mut` method instead most of the time.
-    pub fn get_unknown_gen_mut(&mut self, i: u32) -> Option<(&mut T, Index)> {
-        match self.items.get_mut(i as usize) {
+    pub fn get_unknown_gen_mut(&mut self, i: usize) -> Option<(&mut T, Index)> {
+        match self.items.get_mut(i) {
             Some(Entry::Occupied { generation, value }) => Some((
                 value,
                 Index {
@@ -943,10 +941,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
                     },
                 )) => {
                     self.len -= 1;
-                    let idx = Index {
-                        index: index as u32,
-                        generation,
-                    };
+                    let idx = Index { index, generation };
                     return Some((idx, value));
                 }
                 None => {
@@ -975,10 +970,7 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
                     },
                 )) => {
                     self.len -= 1;
-                    let idx = Index {
-                        index: index as u32,
-                        generation,
-                    };
+                    let idx = Index { index, generation };
                     return Some((idx, value));
                 }
                 None => {
@@ -1047,10 +1039,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
                     },
                 )) => {
                     self.len -= 1;
-                    let idx = Index {
-                        index: index as u32,
-                        generation,
-                    };
+                    let idx = Index { index, generation };
                     return Some((idx, value));
                 }
                 None => {
@@ -1079,10 +1068,7 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
                     },
                 )) => {
                     self.len -= 1;
-                    let idx = Index {
-                        index: index as u32,
-                        generation,
-                    };
+                    let idx = Index { index, generation };
                     return Some((idx, value));
                 }
                 None => {
@@ -1140,10 +1126,7 @@ impl<'a, T> Iterator for Drain<'a, T> {
             match self.inner.next() {
                 Some((_, Entry::Free { .. })) => continue,
                 Some((index, Entry::Occupied { generation, value })) => {
-                    let idx = Index {
-                        index: index as u32,
-                        generation,
-                    };
+                    let idx = Index { index, generation };
                     return Some((idx, value));
                 }
                 None => return None,

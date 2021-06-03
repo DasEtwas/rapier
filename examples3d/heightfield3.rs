@@ -1,5 +1,6 @@
-use rapier3d::na::ComplexField;
-use rapier3d::prelude::*;
+use na::{ComplexField, DMatrix, Isometry3, Point3, Vector3};
+use rapier3d::dynamics::{JointSet, RigidBodyBuilder, RigidBodySet};
+use rapier3d::geometry::{ColliderBuilder, ColliderSet, SharedShape};
 use rapier_testbed3d::Testbed;
 
 pub fn init_world(testbed: &mut Testbed) {
@@ -13,7 +14,7 @@ pub fn init_world(testbed: &mut Testbed) {
     /*
      * Ground
      */
-    let ground_size = Vector::new(100.0, 1.0, 100.0);
+    let ground_size = Vector3::new(100.0, 1.0, 100.0);
     let nsubdivs = 20;
 
     let heights = DMatrix::from_fn(nsubdivs + 1, nsubdivs + 1, |i, j| {
@@ -33,7 +34,7 @@ pub fn init_world(testbed: &mut Testbed) {
     let rigid_body = RigidBodyBuilder::new_static().build();
     let handle = bodies.insert(rigid_body);
     let collider = ColliderBuilder::heightfield(heights, ground_size).build();
-    colliders.insert_with_parent(collider, handle, &mut bodies);
+    colliders.insert(collider, handle, &mut bodies);
 
     /*
      * Create the cubes
@@ -54,9 +55,7 @@ pub fn init_world(testbed: &mut Testbed) {
                 let z = k as f32 * shift - centerz;
 
                 // Build the rigid body.
-                let rigid_body = RigidBodyBuilder::new_dynamic()
-                    .translation(vector![x, y, z])
-                    .build();
+                let rigid_body = RigidBodyBuilder::new_dynamic().translation(x, y, z).build();
                 let handle = bodies.insert(rigid_body);
 
                 let collider = match j % 6 {
@@ -70,15 +69,15 @@ pub fn init_world(testbed: &mut Testbed) {
                     _ => {
                         let shapes = vec![
                             (
-                                Isometry::identity(),
+                                Isometry3::identity(),
                                 SharedShape::cuboid(rad, rad / 2.0, rad / 2.0),
                             ),
                             (
-                                Isometry::translation(rad, 0.0, 0.0),
+                                Isometry3::translation(rad, 0.0, 0.0),
                                 SharedShape::cuboid(rad / 2.0, rad, rad / 2.0),
                             ),
                             (
-                                Isometry::translation(-rad, 0.0, 0.0),
+                                Isometry3::translation(-rad, 0.0, 0.0),
                                 SharedShape::cuboid(rad / 2.0, rad, rad / 2.0),
                             ),
                         ];
@@ -87,7 +86,7 @@ pub fn init_world(testbed: &mut Testbed) {
                     }
                 };
 
-                colliders.insert_with_parent(collider, handle, &mut bodies);
+                colliders.insert(collider, handle, &mut bodies);
             }
         }
     }
@@ -96,5 +95,10 @@ pub fn init_world(testbed: &mut Testbed) {
      * Set up the testbed.
      */
     testbed.set_world(bodies, colliders, joints);
-    testbed.look_at(point![100.0, 100.0, 100.0], Point::origin());
+    testbed.look_at(Point3::new(100.0, 100.0, 100.0), Point3::origin());
+}
+
+fn main() {
+    let testbed = Testbed::from_builders(0, vec![("Boxes", init_world)]);
+    testbed.run()
 }

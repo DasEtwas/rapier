@@ -1,38 +1,38 @@
-use crate::dynamics::RigidBodyHandle;
-use crate::geometry::{ColliderHandle, ContactManifold, SolverContact, SolverFlags};
+use crate::dynamics::RigidBody;
+use crate::geometry::{Collider, ColliderHandle, ContactManifold, SolverContact, SolverFlags};
 use crate::math::{Real, Vector};
 use na::ComplexField;
 
 /// Context given to custom collision filters to filter-out collisions.
-pub struct PairFilterContext<'a, Bodies, Colliders> {
-    /// The set of rigid-bodies.
-    pub bodies: &'a Bodies,
-    /// The set of colliders.
-    pub colliders: &'a Colliders,
+pub struct PairFilterContext<'a> {
+    /// The first rigid-body involved in the potential collision.
+    pub rigid_body1: &'a RigidBody,
+    /// The second rigid-body involved in the potential collision.
+    pub rigid_body2: &'a RigidBody,
     /// The handle of the first collider involved in the potential collision.
-    pub collider1: ColliderHandle,
-    /// The handle of the first collider involved in the potential collision.
-    pub collider2: ColliderHandle,
-    /// The handle of the first body involved in the potential collision.
-    pub rigid_body1: Option<RigidBodyHandle>,
-    /// The handle of the first body involved in the potential collision.
-    pub rigid_body2: Option<RigidBodyHandle>,
+    pub collider_handle1: ColliderHandle,
+    /// The handle of the second collider involved in the potential collision.
+    pub collider_handle2: ColliderHandle,
+    /// The first collider involved in the potential collision.
+    pub collider1: &'a Collider,
+    /// The second collider involved in the potential collision.
+    pub collider2: &'a Collider,
 }
 
 /// Context given to custom contact modifiers to modify the contacts seen by the constraints solver.
-pub struct ContactModificationContext<'a, Bodies, Colliders> {
-    /// The set of rigid-bodies.
-    pub bodies: &'a Bodies,
-    /// The set of colliders.
-    pub colliders: &'a Colliders,
+pub struct ContactModificationContext<'a> {
+    /// The first rigid-body involved in the potential collision.
+    pub rigid_body1: &'a RigidBody,
+    /// The second rigid-body involved in the potential collision.
+    pub rigid_body2: &'a RigidBody,
     /// The handle of the first collider involved in the potential collision.
-    pub collider1: ColliderHandle,
-    /// The handle of the first collider involved in the potential collision.
-    pub collider2: ColliderHandle,
-    /// The handle of the first body involved in the potential collision.
-    pub rigid_body1: Option<RigidBodyHandle>,
-    /// The handle of the first body involved in the potential collision.
-    pub rigid_body2: Option<RigidBodyHandle>,
+    pub collider_handle1: ColliderHandle,
+    /// The handle of the second collider involved in the potential collision.
+    pub collider_handle2: ColliderHandle,
+    /// The first collider involved in the potential collision.
+    pub collider1: &'a Collider,
+    /// The second collider involved in the potential collision.
+    pub collider2: &'a Collider,
     /// The contact manifold.
     pub manifold: &'a ContactManifold,
     /// The solver contacts that can be modified.
@@ -45,7 +45,7 @@ pub struct ContactModificationContext<'a, Bodies, Colliders> {
     pub user_data: &'a mut u32,
 }
 
-impl<'a, Bodies, Colliders> ContactModificationContext<'a, Bodies, Colliders> {
+impl<'a> ContactModificationContext<'a> {
     /// Helper function to update `self` to emulate a oneway-platform.
     ///
     /// The "oneway" behavior will only allow contacts between two colliders
@@ -118,54 +118,25 @@ impl<'a, Bodies, Colliders> ContactModificationContext<'a, Bodies, Colliders> {
 bitflags::bitflags! {
     #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
     /// Flags affecting the behavior of the constraints solver for a given contact manifold.
-    pub struct ActiveHooks: u32 {
+    pub struct PhysicsHooksFlags: u32 {
         /// If set, Rapier will call `PhysicsHooks::filter_contact_pair` whenever relevant.
-        const FILTER_CONTACT_PAIRS = 0b0001;
+        const FILTER_CONTACT_PAIR = 0b0001;
         /// If set, Rapier will call `PhysicsHooks::filter_intersection_pair` whenever relevant.
         const FILTER_INTERSECTION_PAIR = 0b0010;
         /// If set, Rapier will call `PhysicsHooks::modify_solver_contact` whenever relevant.
         const MODIFY_SOLVER_CONTACTS = 0b0100;
     }
 }
-impl Default for ActiveHooks {
-    fn default() -> Self {
-        ActiveHooks::empty()
-    }
-}
-
-// TODO: right now, the wasm version don't have the Send+Sync bounds.
-//       This is because these bounds are very difficult to fulfill if we want to
-//       call JS closures. Also, parallelism cannot be enabled for wasm targets, so
-//       not having Send+Sync isn't a problem.
-/// User-defined functions called by the physics engines during one timestep in order to customize its behavior.
-#[cfg(target_arch = "wasm32")]
-pub trait PhysicsHooks<Bodies, Colliders> {
-    /// Applies the contact pair filter.
-    fn filter_contact_pair(
-        &self,
-        _context: &PairFilterContext<Bodies, Colliders>,
-    ) -> Option<SolverFlags> {
-        None
-    }
-
-    /// Applies the intersection pair filter.
-    fn filter_intersection_pair(&self, _context: &PairFilterContext<Bodies, Colliders>) -> bool {
-        false
-    }
-
-    /// Modifies the set of contacts seen by the constraints solver.
-    fn modify_solver_contacts(&self, _context: &mut ContactModificationContext<Bodies, Colliders>) {
-    }
-}
 
 /// User-defined functions called by the physics engines during one timestep in order to customize its behavior.
-#[cfg(not(target_arch = "wasm32"))]
-pub trait PhysicsHooks<Bodies, Colliders>: Send + Sync {
+pub trait PhysicsHooks: Send + Sync {
+    /// The sets of hooks that must be taken into account.
+    fn active_hooks(&self) -> PhysicsHooksFlags;
+
     /// Applies the contact pair filter.
     ///
-    /// Note that this method will only be called if at least one of the colliders
-    /// involved in the contact contains the `ActiveHooks::FILTER_CONTACT_PAIRS` flags
-    /// in its physics hooks flags.
+    /// Note that this method will only be called if `self.active_hooks()`
+    /// contains the `PhysicsHooksFlags::FILTER_CONTACT_PAIR` flags.
     ///
     /// User-defined filter for potential contact pairs detected by the broad-phase.
     /// This can be used to apply custom logic in order to decide whether two colliders
@@ -185,18 +156,14 @@ pub trait PhysicsHooks<Bodies, Colliders>: Send + Sync {
     /// will be taken into account by the constraints solver. If this returns
     /// `Some(SolverFlags::empty())` then the constraints solver will ignore these
     /// contacts.
-    fn filter_contact_pair(
-        &self,
-        _context: &PairFilterContext<Bodies, Colliders>,
-    ) -> Option<SolverFlags> {
-        Some(SolverFlags::COMPUTE_IMPULSES)
+    fn filter_contact_pair(&self, _context: &PairFilterContext) -> Option<SolverFlags> {
+        None
     }
 
     /// Applies the intersection pair filter.
     ///
-    /// Note that this method will only be called if at least one of the colliders
-    /// involved in the contact contains the `ActiveHooks::FILTER_INTERSECTION_PAIR` flags
-    /// in its physics hooks flags.
+    /// Note that this method will only be called if `self.active_hooks()`
+    /// contains the `PhysicsHooksFlags::FILTER_INTERSECTION_PAIR` flags.
     ///
     /// User-defined filter for potential intersection pairs detected by the broad-phase.
     ///
@@ -212,15 +179,14 @@ pub trait PhysicsHooks<Bodies, Colliders>: Send + Sync {
     /// not compute any intersection information for it.
     /// If this return `true` then the narrow-phase will compute intersection
     /// information for this pair.
-    fn filter_intersection_pair(&self, _context: &PairFilterContext<Bodies, Colliders>) -> bool {
-        true
+    fn filter_intersection_pair(&self, _context: &PairFilterContext) -> bool {
+        false
     }
 
     /// Modifies the set of contacts seen by the constraints solver.
     ///
-    /// Note that this method will only be called if at least one of the colliders
-    /// involved in the contact contains the `ActiveHooks::MODIFY_SOLVER_CONTACTS` flags
-    /// in its physics hooks flags.
+    /// Note that this method will only be called if `self.active_hooks()`
+    /// contains the `PhysicsHooksFlags::MODIFY_SOLVER_CONTACTS` flags.
     ///
     /// By default, the content of `solver_contacts` is computed from `manifold.points`.
     /// This method will be called on each contact manifold which have the flag `SolverFlags::modify_solver_contacts` set.
@@ -241,21 +207,21 @@ pub trait PhysicsHooks<Bodies, Colliders>: Send + Sync {
     /// as 0 and can be modified in `context.user_data`.
     ///
     /// The world-space contact normal can be modified in `context.normal`.
-    fn modify_solver_contacts(&self, _context: &mut ContactModificationContext<Bodies, Colliders>) {
-    }
+    fn modify_solver_contacts(&self, _context: &mut ContactModificationContext) {}
 }
 
-impl<Bodies, Colliders> PhysicsHooks<Bodies, Colliders> for () {
-    fn filter_contact_pair(
-        &self,
-        _context: &PairFilterContext<Bodies, Colliders>,
-    ) -> Option<SolverFlags> {
-        Some(SolverFlags::default())
+impl PhysicsHooks for () {
+    fn active_hooks(&self) -> PhysicsHooksFlags {
+        PhysicsHooksFlags::empty()
     }
 
-    fn filter_intersection_pair(&self, _: &PairFilterContext<Bodies, Colliders>) -> bool {
-        true
+    fn filter_contact_pair(&self, _: &PairFilterContext) -> Option<SolverFlags> {
+        None
     }
 
-    fn modify_solver_contacts(&self, _: &mut ContactModificationContext<Bodies, Colliders>) {}
+    fn filter_intersection_pair(&self, _: &PairFilterContext) -> bool {
+        false
+    }
+
+    fn modify_solver_contacts(&self, _: &mut ContactModificationContext) {}
 }

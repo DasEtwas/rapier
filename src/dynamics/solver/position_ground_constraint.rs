@@ -1,6 +1,5 @@
 use super::AnyPositionConstraint;
-use crate::data::{BundleSet, ComponentSet};
-use crate::dynamics::{IntegrationParameters, RigidBodyIds, RigidBodyMassProps, RigidBodyPosition};
+use crate::dynamics::{IntegrationParameters, RigidBodySet};
 use crate::geometry::ContactManifold;
 use crate::math::{
     AngularInertia, Isometry, Point, Real, Rotation, Translation, Vector, MAX_MANIFOLD_POINTS,
@@ -9,7 +8,7 @@ use crate::utils::{WAngularInertia, WCross, WDot};
 
 pub(crate) struct PositionGroundConstraint {
     pub rb2: usize,
-    // NOTE: the points are relative to the center of masses.
+    // NOTE: The points are relative to the center of masses.
     pub p1: [Point<Real>; MAX_MANIFOLD_POINTS],
     pub local_p2: [Point<Real>; MAX_MANIFOLD_POINTS],
     pub dists: [Real; MAX_MANIFOLD_POINTS],
@@ -22,27 +21,23 @@ pub(crate) struct PositionGroundConstraint {
 }
 
 impl PositionGroundConstraint {
-    pub fn generate<Bodies>(
+    pub fn generate(
         params: &IntegrationParameters,
         manifold: &ContactManifold,
-        bodies: &Bodies,
+        bodies: &RigidBodySet,
         out_constraints: &mut Vec<AnyPositionConstraint>,
         push: bool,
-    ) where
-        Bodies: ComponentSet<RigidBodyPosition>
-            + ComponentSet<RigidBodyMassProps>
-            + ComponentSet<RigidBodyIds>,
-    {
+    ) {
+        let mut rb1 = &bodies[manifold.data.body_pair.body1];
+        let mut rb2 = &bodies[manifold.data.body_pair.body2];
         let flip = manifold.data.relative_dominance < 0;
 
-        let (handle2, n1) = if flip {
-            (manifold.data.rigid_body1.unwrap(), -manifold.data.normal)
+        let n1 = if flip {
+            std::mem::swap(&mut rb1, &mut rb2);
+            -manifold.data.normal
         } else {
-            (manifold.data.rigid_body2.unwrap(), manifold.data.normal)
+            manifold.data.normal
         };
-
-        let (ids2, poss2, mprops2): (&RigidBodyIds, &RigidBodyPosition, &RigidBodyMassProps) =
-            bodies.index_bundle(handle2.0);
 
         for (l, manifold_contacts) in manifold
             .data
@@ -56,20 +51,20 @@ impl PositionGroundConstraint {
 
             for k in 0..manifold_contacts.len() {
                 p1[k] = manifold_contacts[k].point;
-                local_p2[k] = poss2
+                local_p2[k] = rb2
                     .position
                     .inverse_transform_point(&manifold_contacts[k].point);
                 dists[k] = manifold_contacts[k].dist;
             }
 
             let constraint = PositionGroundConstraint {
-                rb2: ids2.active_set_offset,
+                rb2: rb2.active_set_offset,
                 p1,
                 local_p2,
                 n1,
                 dists,
-                im2: mprops2.effective_inv_mass,
-                ii2: mprops2.effective_world_inv_inertia_sqrt.squared(),
+                im2: rb2.effective_inv_mass,
+                ii2: rb2.effective_world_inv_inertia_sqrt.squared(),
                 num_contacts: manifold_contacts.len() as u8,
                 erp: params.erp,
                 max_linear_correction: params.max_linear_correction,

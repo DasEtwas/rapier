@@ -1,4 +1,6 @@
-use rapier3d::prelude::*;
+use na::{Isometry3, Point3};
+use rapier3d::dynamics::{BodyStatus, FixedJoint, JointSet, RigidBodyBuilder, RigidBodySet};
+use rapier3d::geometry::{ColliderBuilder, ColliderSet};
 use rapier_testbed3d::Testbed;
 
 pub fn init_world(testbed: &mut Testbed) {
@@ -29,29 +31,29 @@ pub fn init_world(testbed: &mut Testbed) {
                         let fk = k as f32;
                         let fi = i as f32;
 
-                        // NOTE: the num - 2 test is to avoid two consecutive
+                        // NOTE: Testing for "k != num - 2" is needed to avoid two consecutive
                         // fixed bodies. Because physx will crash if we add
                         // a joint between these.
 
                         let status = if i == 0 && (k % 4 == 0 && k != num - 2 || k == num - 1) {
-                            RigidBodyType::Static
+                            BodyStatus::Static
                         } else {
-                            RigidBodyType::Dynamic
+                            BodyStatus::Dynamic
                         };
 
                         let rigid_body = RigidBodyBuilder::new(status)
-                            .translation(vector![x + fk * shift, y, z + fi * shift])
+                            .translation(x + fk * shift, y, z + fi * shift)
                             .build();
                         let child_handle = bodies.insert(rigid_body);
                         let collider = ColliderBuilder::ball(rad).build();
-                        colliders.insert_with_parent(collider, child_handle, &mut bodies);
+                        colliders.insert(collider, child_handle, &mut bodies);
 
                         // Vertical joint.
                         if i > 0 {
                             let parent_handle = *body_handles.last().unwrap();
                             let joint = FixedJoint::new(
-                                Isometry::identity(),
-                                Isometry::translation(0.0, 0.0, -shift),
+                                Isometry3::identity(),
+                                Isometry3::translation(0.0, 0.0, -shift),
                             );
                             joints.insert(&mut bodies, parent_handle, child_handle, joint);
                         }
@@ -61,8 +63,8 @@ pub fn init_world(testbed: &mut Testbed) {
                             let parent_index = body_handles.len() - num;
                             let parent_handle = body_handles[parent_index];
                             let joint = FixedJoint::new(
-                                Isometry::identity(),
-                                Isometry::translation(-shift, 0.0, 0.0),
+                                Isometry3::identity(),
+                                Isometry3::translation(-shift, 0.0, 0.0),
                             );
                             joints.insert(&mut bodies, parent_handle, child_handle, joint);
                         }
@@ -78,5 +80,13 @@ pub fn init_world(testbed: &mut Testbed) {
      * Set up the testbed.
      */
     testbed.set_world(bodies, colliders, joints);
-    testbed.look_at(point![-38.0, 14.0, 108.0], point![46.0, 12.0, 23.0]);
+    testbed.look_at(
+        Point3::new(-38.0, 14.0, 108.0),
+        Point3::new(46.0, 12.0, 23.0),
+    );
+}
+
+fn main() {
+    let testbed = Testbed::from_builders(0, vec![("Joints", init_world)]);
+    testbed.run()
 }

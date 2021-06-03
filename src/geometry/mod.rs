@@ -1,7 +1,8 @@
 //! Structures related to geometry: colliders, shapes, etc.
 
 pub use self::broad_phase_multi_sap::BroadPhase;
-pub use self::collider_components::*;
+pub use self::collider::{Collider, ColliderBuilder};
+pub use self::collider_set::{ColliderHandle, ColliderSet};
 pub use self::contact_pair::{ContactData, ContactManifoldData};
 pub use self::contact_pair::{ContactPair, SolverContact, SolverFlags};
 pub use self::interaction_graph::{
@@ -9,11 +10,6 @@ pub use self::interaction_graph::{
 };
 pub use self::interaction_groups::InteractionGroups;
 pub use self::narrow_phase::NarrowPhase;
-
-#[cfg(feature = "default-sets")]
-pub use self::collider::{Collider, ColliderBuilder};
-#[cfg(feature = "default-sets")]
-pub use self::collider_set::ColliderSet;
 
 pub use parry::query::TrackedContact;
 
@@ -43,11 +39,11 @@ pub type Cone = parry::shape::Cone;
 pub type AABB = parry::bounding_volume::AABB;
 /// A ray that can be cast against colliders.
 pub type Ray = parry::query::Ray;
-/// The intersection between a ray and a  collider.
+/// The intersection between a ray and a collider.
 pub type RayIntersection = parry::query::RayIntersection;
-/// The the projection of a point on a collider.
+/// The projection of a point on a collider.
 pub type PointProjection = parry::query::PointProjection;
-/// The the time of impact between two shapes.
+/// Time of impact information between two shapes.
 pub type TOI = parry::query::TOI;
 pub use parry::shape::SharedShape;
 
@@ -56,29 +52,26 @@ pub use parry::shape::SharedShape;
 pub enum ContactEvent {
     /// Event occurring when two collision objects start being in contact.
     ///
-    /// This event is generated whenever the narrow-phase finds a contact between two collision objects that did not have any contact at the last update.
+    /// This event is generated whenever the narrow-phase finds a contact between two collision objects that did not have any contact during the last update.
     Started(ColliderHandle, ColliderHandle),
     /// Event occurring when two collision objects stop being in contact.
     ///
-    /// This event is generated whenever the narrow-phase fails to find any contact between two collision objects that did have at least one contact at the last update.
+    /// This event is generated whenever the narrow-phase fails to find any contact between two collision objects that did have at least one contact during the last update.
     Stopped(ColliderHandle, ColliderHandle),
 }
 
 #[derive(Copy, Clone, Debug)]
-/// Events occurring when two collision objects start or stop being in close proximity, contact, or disjoint.
+/// Events occurring when the state of intersection between two colliders changes.
 pub struct IntersectionEvent {
-    /// The first collider to which the proximity event applies.
+    /// The first collider to which the intersection event applies.
     pub collider1: ColliderHandle,
-    /// The second collider to which the proximity event applies.
+    /// The second collider to which the intersection event applies.
     pub collider2: ColliderHandle,
     /// Are the two colliders intersecting?
     pub intersecting: bool,
 }
 
 impl IntersectionEvent {
-    /// Instantiates a new proximity event.
-    ///
-    /// Panics if `prev_status` is equal to `new_status`.
     pub fn new(collider1: ColliderHandle, collider2: ColliderHandle, intersecting: bool) -> Self {
         Self {
             collider1,
@@ -89,8 +82,9 @@ impl IntersectionEvent {
 }
 
 pub(crate) use self::broad_phase_multi_sap::{BroadPhasePairEvent, ColliderPair, SAPProxyIndex};
+pub(crate) use self::collider_set::RemovedCollider;
 pub(crate) use self::narrow_phase::ContactManifoldIndex;
-pub(crate) use parry::partitioning::QBVH;
+pub(crate) use parry::partitioning::SimdQuadTree;
 pub use parry::shape::*;
 
 #[cfg(feature = "serde-serialize")]
@@ -105,13 +99,9 @@ pub(crate) fn default_query_dispatcher() -> std::sync::Arc<dyn parry::query::Que
 }
 
 mod broad_phase_multi_sap;
-mod collider_components;
+mod collider;
+mod collider_set;
 mod contact_pair;
 mod interaction_graph;
 mod interaction_groups;
 mod narrow_phase;
-
-#[cfg(feature = "default-sets")]
-mod collider;
-#[cfg(feature = "default-sets")]
-mod collider_set;

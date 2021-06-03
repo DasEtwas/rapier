@@ -2,8 +2,7 @@ use simba::simd::{SimdBool as _, SimdPartialOrd, SimdValue};
 
 use crate::dynamics::solver::DeltaVel;
 use crate::dynamics::{
-    IntegrationParameters, JointGraphEdge, JointIndex, JointParams, PrismaticJoint, RigidBodyIds,
-    RigidBodyMassProps, RigidBodyPosition, RigidBodyVelocity,
+    IntegrationParameters, JointGraphEdge, JointIndex, JointParams, PrismaticJoint, RigidBody,
 };
 use crate::math::{
     AngVector, AngularInertia, Isometry, Point, Real, SimdBool, SimdReal, Vector, SIMD_WIDTH,
@@ -72,60 +71,47 @@ impl WPrismaticVelocityConstraint {
     pub fn from_params(
         params: &IntegrationParameters,
         joint_id: [JointIndex; SIMD_WIDTH],
-        rbs1: (
-            [&RigidBodyPosition; SIMD_WIDTH],
-            [&RigidBodyVelocity; SIMD_WIDTH],
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
-        rbs2: (
-            [&RigidBodyPosition; SIMD_WIDTH],
-            [&RigidBodyVelocity; SIMD_WIDTH],
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
+        rbs1: [&RigidBody; SIMD_WIDTH],
+        rbs2: [&RigidBody; SIMD_WIDTH],
         cparams: [&PrismaticJoint; SIMD_WIDTH],
     ) -> Self {
-        let (poss1, vels1, mprops1, ids1) = rbs1;
-        let (poss2, vels2, mprops2, ids2) = rbs2;
+        let position1 = Isometry::from(array![|ii| rbs1[ii].position; SIMD_WIDTH]);
+        let linvel1 = Vector::from(array![|ii| rbs1[ii].linvel; SIMD_WIDTH]);
+        let angvel1 = AngVector::<SimdReal>::from(array![|ii| rbs1[ii].angvel; SIMD_WIDTH]);
+        let world_com1 = Point::from(array![|ii| rbs1[ii].world_com; SIMD_WIDTH]);
+        let im1 = SimdReal::from(array![|ii| rbs1[ii].effective_inv_mass; SIMD_WIDTH]);
+        let ii1_sqrt = AngularInertia::<SimdReal>::from(
+            array![|ii| rbs1[ii].effective_world_inv_inertia_sqrt; SIMD_WIDTH],
+        );
+        let mj_lambda1 = array![|ii| rbs1[ii].active_set_offset; SIMD_WIDTH];
 
-        let position1 = Isometry::from(gather![|ii| poss1[ii].position]);
-        let linvel1 = Vector::from(gather![|ii| vels1[ii].linvel]);
-        let angvel1 = AngVector::<SimdReal>::from(gather![|ii| vels1[ii].angvel]);
-        let world_com1 = Point::from(gather![|ii| mprops1[ii].world_com]);
-        let im1 = SimdReal::from(gather![|ii| mprops1[ii].effective_inv_mass]);
-        let ii1_sqrt = AngularInertia::<SimdReal>::from(gather![
-            |ii| mprops1[ii].effective_world_inv_inertia_sqrt
-        ]);
-        let mj_lambda1 = gather![|ii| ids1[ii].active_set_offset];
+        let position2 = Isometry::from(array![|ii| rbs2[ii].position; SIMD_WIDTH]);
+        let linvel2 = Vector::from(array![|ii| rbs2[ii].linvel; SIMD_WIDTH]);
+        let angvel2 = AngVector::<SimdReal>::from(array![|ii| rbs2[ii].angvel; SIMD_WIDTH]);
+        let world_com2 = Point::from(array![|ii| rbs2[ii].world_com; SIMD_WIDTH]);
+        let im2 = SimdReal::from(array![|ii| rbs2[ii].effective_inv_mass; SIMD_WIDTH]);
+        let ii2_sqrt = AngularInertia::<SimdReal>::from(
+            array![|ii| rbs2[ii].effective_world_inv_inertia_sqrt; SIMD_WIDTH],
+        );
+        let mj_lambda2 = array![|ii| rbs2[ii].active_set_offset; SIMD_WIDTH];
 
-        let position2 = Isometry::from(gather![|ii| poss2[ii].position]);
-        let linvel2 = Vector::from(gather![|ii| vels2[ii].linvel]);
-        let angvel2 = AngVector::<SimdReal>::from(gather![|ii| vels2[ii].angvel]);
-        let world_com2 = Point::from(gather![|ii| mprops2[ii].world_com]);
-        let im2 = SimdReal::from(gather![|ii| mprops2[ii].effective_inv_mass]);
-        let ii2_sqrt = AngularInertia::<SimdReal>::from(gather![
-            |ii| mprops2[ii].effective_world_inv_inertia_sqrt
-        ]);
-        let mj_lambda2 = gather![|ii| ids2[ii].active_set_offset];
-
-        let local_anchor1 = Point::from(gather![|ii| cparams[ii].local_anchor1]);
-        let local_anchor2 = Point::from(gather![|ii| cparams[ii].local_anchor2]);
-        let local_axis1 = Vector::from(gather![|ii| *cparams[ii].local_axis1]);
-        let local_axis2 = Vector::from(gather![|ii| *cparams[ii].local_axis2]);
+        let local_anchor1 = Point::from(array![|ii| cparams[ii].local_anchor1; SIMD_WIDTH]);
+        let local_anchor2 = Point::from(array![|ii| cparams[ii].local_anchor2; SIMD_WIDTH]);
+        let local_axis1 = Vector::from(array![|ii| *cparams[ii].local_axis1; SIMD_WIDTH]);
+        let local_axis2 = Vector::from(array![|ii| *cparams[ii].local_axis2; SIMD_WIDTH]);
 
         #[cfg(feature = "dim2")]
-        let local_basis1 = [Vector::from(gather![|ii| cparams[ii].basis1[0]])];
+        let local_basis1 = [Vector::from(array![|ii| cparams[ii].basis1[0]; SIMD_WIDTH])];
         #[cfg(feature = "dim3")]
         let local_basis1 = [
-            Vector::from(gather![|ii| cparams[ii].basis1[0]]),
-            Vector::from(gather![|ii| cparams[ii].basis1[1]]),
+            Vector::from(array![|ii| cparams[ii].basis1[0]; SIMD_WIDTH]),
+            Vector::from(array![|ii| cparams[ii].basis1[1]; SIMD_WIDTH]),
         ];
 
         #[cfg(feature = "dim2")]
-        let impulse = Vector2::from(gather![|ii| cparams[ii].impulse]);
+        let impulse = Vector2::from(array![|ii| cparams[ii].impulse; SIMD_WIDTH]);
         #[cfg(feature = "dim3")]
-        let impulse = Vector5::from(gather![|ii| cparams[ii].impulse]);
+        let impulse = Vector5::from(array![|ii| cparams[ii].impulse; SIMD_WIDTH]);
 
         let anchor1 = position1 * local_anchor1;
         let anchor2 = position2 * local_anchor2;
@@ -221,8 +207,8 @@ impl WPrismaticVelocityConstraint {
 
             let linear_err = basis1.tr_mul(&(anchor2 - anchor1));
 
-            let local_frame1 = Isometry::from(gather![|ii| cparams[ii].local_frame1()]);
-            let local_frame2 = Isometry::from(gather![|ii| cparams[ii].local_frame2()]);
+            let local_frame1 = Isometry::from(array![|ii| cparams[ii].local_frame1(); SIMD_WIDTH]);
+            let local_frame2 = Isometry::from(array![|ii| cparams[ii].local_frame2(); SIMD_WIDTH]);
 
             let frame1 = position1 * local_frame1;
             let frame2 = position2 * local_frame2;
@@ -235,30 +221,31 @@ impl WPrismaticVelocityConstraint {
 
             #[cfg(feature = "dim3")]
             {
-                let ang_err = Vector3::from(gather![|ii| ang_err.extract(ii).scaled_axis()]);
+                let ang_err =
+                    Vector3::from(array![|ii| ang_err.extract(ii).scaled_axis(); SIMD_WIDTH]);
                 rhs += Vector5::new(linear_err.x, linear_err.y, ang_err.x, ang_err.y, ang_err.z)
                     * velocity_based_erp_inv_dt;
             }
         }
 
-        // Setup limit constraint.
+        // Set up limit constraint.
         let zero: SimdReal = na::zero();
-        let limits_forcedir2 = axis2; // hopefully axis1 is colinear with axis2
+        let limits_forcedir2 = axis2; // hopefully axis1 is collinear with axis2
         let mut limits_active = false;
         let mut limits_rhs = zero;
         let mut limits_impulse = zero;
         let mut limits_inv_lhs = zero;
         let mut limits_impulse_limits = (zero, zero);
 
-        let limits_enabled = SimdBool::from(gather![|ii| cparams[ii].limits_enabled]);
+        let limits_enabled = SimdBool::from(array![|ii| cparams[ii].limits_enabled; SIMD_WIDTH]);
         if limits_enabled.any() {
             let danchor = anchor2 - anchor1;
             let dist = danchor.dot(&axis1);
 
             // TODO: we should allow predictive constraint activation.
 
-            let min_limit = SimdReal::from(gather![|ii| cparams[ii].limits[0]]);
-            let max_limit = SimdReal::from(gather![|ii| cparams[ii].limits[1]]);
+            let min_limit = SimdReal::from(array![|ii| cparams[ii].limits[0]; SIMD_WIDTH]);
+            let max_limit = SimdReal::from(array![|ii| cparams[ii].limits[1]; SIMD_WIDTH]);
 
             let min_enabled = dist.simd_lt(min_limit);
             let max_enabled = dist.simd_gt(max_limit);
@@ -278,9 +265,10 @@ impl WPrismaticVelocityConstraint {
                     - (min_limit - dist).simd_max(zero))
                     * SimdReal::splat(velocity_based_erp_inv_dt);
 
-                limits_impulse = SimdReal::from(gather![|ii| cparams[ii].limits_impulse])
-                    .simd_max(limits_impulse_limits.0)
-                    .simd_min(limits_impulse_limits.1);
+                limits_impulse =
+                    SimdReal::from(array![|ii| cparams[ii].limits_impulse; SIMD_WIDTH])
+                        .simd_max(limits_impulse_limits.0)
+                        .simd_min(limits_impulse_limits.1);
 
                 limits_inv_lhs = SimdReal::splat(1.0)
                     / (im1
@@ -315,16 +303,20 @@ impl WPrismaticVelocityConstraint {
 
     pub fn warmstart(&self, mj_lambdas: &mut [DeltaVel<Real>]) {
         let mut mj_lambda1 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda1[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
         let mut mj_lambda2 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
 
         let lin_impulse = self.basis1 * self.impulse.fixed_rows::<LIN_IMPULSE_DIM>(0).into_owned();
@@ -436,16 +428,20 @@ impl WPrismaticVelocityConstraint {
 
     pub fn solve(&mut self, mj_lambdas: &mut [DeltaVel<Real>]) {
         let mut mj_lambda1 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda1[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda1[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
         let mut mj_lambda2 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
 
         self.solve_dofs(&mut mj_lambda1, &mut mj_lambda2);
@@ -514,85 +510,59 @@ impl WPrismaticVelocityGroundConstraint {
     pub fn from_params(
         params: &IntegrationParameters,
         joint_id: [JointIndex; SIMD_WIDTH],
-        rbs1: (
-            [&RigidBodyPosition; SIMD_WIDTH],
-            [&RigidBodyVelocity; SIMD_WIDTH],
-            [&RigidBodyMassProps; SIMD_WIDTH],
-        ),
-        rbs2: (
-            [&RigidBodyPosition; SIMD_WIDTH],
-            [&RigidBodyVelocity; SIMD_WIDTH],
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
+        rbs1: [&RigidBody; SIMD_WIDTH],
+        rbs2: [&RigidBody; SIMD_WIDTH],
         cparams: [&PrismaticJoint; SIMD_WIDTH],
         flipped: [bool; SIMD_WIDTH],
     ) -> Self {
-        let (poss1, vels1, mprops1) = rbs1;
-        let (poss2, vels2, mprops2, ids2) = rbs2;
+        let position1 = Isometry::from(array![|ii| rbs1[ii].position; SIMD_WIDTH]);
+        let linvel1 = Vector::from(array![|ii| rbs1[ii].linvel; SIMD_WIDTH]);
+        let angvel1 = AngVector::<SimdReal>::from(array![|ii| rbs1[ii].angvel; SIMD_WIDTH]);
+        let world_com1 = Point::from(array![|ii| rbs1[ii].world_com; SIMD_WIDTH]);
 
-        let position1 = Isometry::from(gather![|ii| poss1[ii].position]);
-        let linvel1 = Vector::from(gather![|ii| vels1[ii].linvel]);
-        let angvel1 = AngVector::<SimdReal>::from(gather![|ii| vels1[ii].angvel]);
-        let world_com1 = Point::from(gather![|ii| mprops1[ii].world_com]);
-
-        let position2 = Isometry::from(gather![|ii| poss2[ii].position]);
-        let linvel2 = Vector::from(gather![|ii| vels2[ii].linvel]);
-        let angvel2 = AngVector::<SimdReal>::from(gather![|ii| vels2[ii].angvel]);
-        let world_com2 = Point::from(gather![|ii| mprops2[ii].world_com]);
-        let im2 = SimdReal::from(gather![|ii| mprops2[ii].effective_inv_mass]);
-        let ii2_sqrt = AngularInertia::<SimdReal>::from(gather![
-            |ii| mprops2[ii].effective_world_inv_inertia_sqrt
-        ]);
-        let mj_lambda2 = gather![|ii| ids2[ii].active_set_offset];
+        let position2 = Isometry::from(array![|ii| rbs2[ii].position; SIMD_WIDTH]);
+        let linvel2 = Vector::from(array![|ii| rbs2[ii].linvel; SIMD_WIDTH]);
+        let angvel2 = AngVector::<SimdReal>::from(array![|ii| rbs2[ii].angvel; SIMD_WIDTH]);
+        let world_com2 = Point::from(array![|ii| rbs2[ii].world_com; SIMD_WIDTH]);
+        let im2 = SimdReal::from(array![|ii| rbs2[ii].effective_inv_mass; SIMD_WIDTH]);
+        let ii2_sqrt = AngularInertia::<SimdReal>::from(
+            array![|ii| rbs2[ii].effective_world_inv_inertia_sqrt; SIMD_WIDTH],
+        );
+        let mj_lambda2 = array![|ii| rbs2[ii].active_set_offset; SIMD_WIDTH];
 
         #[cfg(feature = "dim2")]
-        let impulse = Vector2::from(gather![|ii| cparams[ii].impulse]);
+        let impulse = Vector2::from(array![|ii| cparams[ii].impulse; SIMD_WIDTH]);
         #[cfg(feature = "dim3")]
-        let impulse = Vector5::from(gather![|ii| cparams[ii].impulse]);
+        let impulse = Vector5::from(array![|ii| cparams[ii].impulse; SIMD_WIDTH]);
 
-        let local_anchor1 = Point::from(gather![|ii| if flipped[ii] {
-            cparams[ii].local_anchor2
-        } else {
-            cparams[ii].local_anchor1
-        }]);
-        let local_anchor2 = Point::from(gather![|ii| if flipped[ii] {
-            cparams[ii].local_anchor1
-        } else {
-            cparams[ii].local_anchor2
-        }]);
-        let local_axis1 = Vector::from(gather![|ii| if flipped[ii] {
-            *cparams[ii].local_axis2
-        } else {
-            *cparams[ii].local_axis1
-        }]);
-        let local_axis2 = Vector::from(gather![|ii| if flipped[ii] {
-            *cparams[ii].local_axis1
-        } else {
-            *cparams[ii].local_axis2
-        }]);
+        let local_anchor1 = Point::from(
+            array![|ii| if flipped[ii] { cparams[ii].local_anchor2 } else { cparams[ii].local_anchor1 }; SIMD_WIDTH],
+        );
+        let local_anchor2 = Point::from(
+            array![|ii| if flipped[ii] { cparams[ii].local_anchor1 } else { cparams[ii].local_anchor2 }; SIMD_WIDTH],
+        );
+        let local_axis1 = Vector::from(
+            array![|ii| if flipped[ii] { *cparams[ii].local_axis2 } else { *cparams[ii].local_axis1 }; SIMD_WIDTH],
+        );
+        let local_axis2 = Vector::from(
+            array![|ii| if flipped[ii] { *cparams[ii].local_axis1 } else { *cparams[ii].local_axis2 }; SIMD_WIDTH],
+        );
 
         #[cfg(feature = "dim2")]
         let basis1 = position1
-            * Vector::from(gather![|ii| if flipped[ii] {
-                cparams[ii].basis2[0]
-            } else {
-                cparams[ii].basis1[0]
-            }]);
+            * Vector::from(
+                array![|ii| if flipped[ii] { cparams[ii].basis2[0] } else { cparams[ii].basis1[0] }; SIMD_WIDTH],
+            );
         #[cfg(feature = "dim3")]
         let basis1 = Matrix3x2::from_columns(&[
             position1
-                * Vector::from(gather![|ii| if flipped[ii] {
-                    cparams[ii].basis2[0]
-                } else {
-                    cparams[ii].basis1[0]
-                }]),
+                * Vector::from(
+                    array![|ii| if flipped[ii] { cparams[ii].basis2[0] } else { cparams[ii].basis1[0] }; SIMD_WIDTH],
+                ),
             position1
-                * Vector::from(gather![|ii| if flipped[ii] {
-                    cparams[ii].basis2[1]
-                } else {
-                    cparams[ii].basis1[1]
-                }]),
+                * Vector::from(
+                    array![|ii| if flipped[ii] { cparams[ii].basis2[1] } else { cparams[ii].basis1[1] }; SIMD_WIDTH],
+                ),
         ]);
 
         let anchor1 = position1 * local_anchor1;
@@ -664,17 +634,13 @@ impl WPrismaticVelocityGroundConstraint {
             let linear_err = basis1.tr_mul(&(anchor2 - anchor1));
 
             let frame1 = position1
-                * Isometry::from(gather![|ii| if flipped[ii] {
-                    cparams[ii].local_frame2()
-                } else {
-                    cparams[ii].local_frame1()
-                }]);
+                * Isometry::from(
+                    array![|ii| if flipped[ii] { cparams[ii].local_frame2() } else { cparams[ii].local_frame1() }; SIMD_WIDTH],
+                );
             let frame2 = position2
-                * Isometry::from(gather![|ii| if flipped[ii] {
-                    cparams[ii].local_frame1()
-                } else {
-                    cparams[ii].local_frame2()
-                }]);
+                * Isometry::from(
+                    array![|ii| if flipped[ii] { cparams[ii].local_frame1() } else { cparams[ii].local_frame2() }; SIMD_WIDTH],
+                );
 
             let ang_err = frame2.rotation * frame1.rotation.inverse();
 
@@ -685,28 +651,29 @@ impl WPrismaticVelocityGroundConstraint {
 
             #[cfg(feature = "dim3")]
             {
-                let ang_err = Vector3::from(gather![|ii| ang_err.extract(ii).scaled_axis()]);
+                let ang_err =
+                    Vector3::from(array![|ii| ang_err.extract(ii).scaled_axis(); SIMD_WIDTH]);
                 rhs += Vector5::new(linear_err.x, linear_err.y, ang_err.x, ang_err.y, ang_err.z)
                     * velocity_based_erp_inv_dt;
             }
         }
 
-        // Setup limit constraint.
+        // Set up limit constraint.
         let zero: SimdReal = na::zero();
-        let limits_forcedir2 = axis2; // hopefully axis1 is colinear with axis2
+        let limits_forcedir2 = axis2; // hopefully axis1 is collinear with axis2
         let mut limits_active = false;
         let mut limits_rhs = zero;
         let mut limits_impulse = zero;
         let mut limits_impulse_limits = (zero, zero);
 
-        let limits_enabled = SimdBool::from(gather![|ii| cparams[ii].limits_enabled]);
+        let limits_enabled = SimdBool::from(array![|ii| cparams[ii].limits_enabled; SIMD_WIDTH]);
         if limits_enabled.any() {
             let danchor = anchor2 - anchor1;
             let dist = danchor.dot(&axis1);
 
             // TODO: we should allow predictive constraint activation.
-            let min_limit = SimdReal::from(gather![|ii| cparams[ii].limits[0]]);
-            let max_limit = SimdReal::from(gather![|ii| cparams[ii].limits[1]]);
+            let min_limit = SimdReal::from(array![|ii| cparams[ii].limits[0]; SIMD_WIDTH]);
+            let max_limit = SimdReal::from(array![|ii| cparams[ii].limits[1]; SIMD_WIDTH]);
 
             let min_enabled = dist.simd_lt(min_limit);
             let max_enabled = dist.simd_gt(max_limit);
@@ -723,9 +690,10 @@ impl WPrismaticVelocityGroundConstraint {
                     - (min_limit - dist).simd_max(zero))
                     * SimdReal::splat(velocity_based_erp_inv_dt);
 
-                limits_impulse = SimdReal::from(gather![|ii| cparams[ii].limits_impulse])
-                    .simd_max(limits_impulse_limits.0)
-                    .simd_min(limits_impulse_limits.1);
+                limits_impulse =
+                    SimdReal::from(array![|ii| cparams[ii].limits_impulse; SIMD_WIDTH])
+                        .simd_max(limits_impulse_limits.0)
+                        .simd_min(limits_impulse_limits.1);
             }
         }
 
@@ -750,10 +718,12 @@ impl WPrismaticVelocityGroundConstraint {
 
     pub fn warmstart(&self, mj_lambdas: &mut [DeltaVel<Real>]) {
         let mut mj_lambda2 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
 
         let lin_impulse = self.basis1 * self.impulse.fixed_rows::<LIN_IMPULSE_DIM>(0).into_owned();
@@ -821,10 +791,12 @@ impl WPrismaticVelocityGroundConstraint {
 
     pub fn solve(&mut self, mj_lambdas: &mut [DeltaVel<Real>]) {
         let mut mj_lambda2 = DeltaVel {
-            linear: Vector::from(gather![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear]),
-            angular: AngVector::from(gather![
-                |ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular
-            ]),
+            linear: Vector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].linear; SIMD_WIDTH],
+            ),
+            angular: AngVector::from(
+                array![|ii| mj_lambdas[self.mj_lambda2[ii] as usize].angular; SIMD_WIDTH],
+            ),
         };
 
         self.solve_dofs(&mut mj_lambda2);

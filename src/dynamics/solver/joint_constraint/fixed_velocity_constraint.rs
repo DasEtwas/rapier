@@ -1,7 +1,6 @@
 use crate::dynamics::solver::DeltaVel;
 use crate::dynamics::{
-    FixedJoint, IntegrationParameters, JointGraphEdge, JointIndex, JointParams, RigidBodyIds,
-    RigidBodyMassProps, RigidBodyPosition, RigidBodyVelocity,
+    FixedJoint, IntegrationParameters, JointGraphEdge, JointIndex, JointParams, RigidBody,
 };
 use crate::math::{AngularInertia, Real, SpacialVector, Vector, DIM};
 use crate::utils::{WAngularInertia, WCross, WCrossMatrix};
@@ -20,12 +19,12 @@ pub(crate) struct FixedVelocityConstraint {
     impulse: SpacialVector<Real>,
 
     #[cfg(feature = "dim3")]
-    inv_lhs: Matrix6<Real>, // FIXME: replace by Cholesky.
+    inv_lhs: Matrix6<Real>, // FIXME: replace with Cholesky.
     #[cfg(feature = "dim3")]
     rhs: Vector6<Real>,
 
     #[cfg(feature = "dim2")]
-    inv_lhs: Matrix3<Real>, // FIXME: replace by Cholesky.
+    inv_lhs: Matrix3<Real>, // FIXME: replace with Cholesky.
     #[cfg(feature = "dim2")]
     rhs: Vector3<Real>,
 
@@ -46,31 +45,18 @@ impl FixedVelocityConstraint {
     pub fn from_params(
         params: &IntegrationParameters,
         joint_id: JointIndex,
-        rb1: (
-            &RigidBodyPosition,
-            &RigidBodyVelocity,
-            &RigidBodyMassProps,
-            &RigidBodyIds,
-        ),
-        rb2: (
-            &RigidBodyPosition,
-            &RigidBodyVelocity,
-            &RigidBodyMassProps,
-            &RigidBodyIds,
-        ),
+        rb1: &RigidBody,
+        rb2: &RigidBody,
         cparams: &FixedJoint,
     ) -> Self {
-        let (poss1, vels1, mprops1, ids1) = rb1;
-        let (poss2, vels2, mprops2, ids2) = rb2;
-
-        let anchor1 = poss1.position * cparams.local_frame1;
-        let anchor2 = poss2.position * cparams.local_frame2;
-        let im1 = mprops1.effective_inv_mass;
-        let im2 = mprops2.effective_inv_mass;
-        let ii1 = mprops1.effective_world_inv_inertia_sqrt.squared();
-        let ii2 = mprops2.effective_world_inv_inertia_sqrt.squared();
-        let r1 = anchor1.translation.vector - mprops1.world_com.coords;
-        let r2 = anchor2.translation.vector - mprops2.world_com.coords;
+        let anchor1 = rb1.position * cparams.local_anchor1;
+        let anchor2 = rb2.position * cparams.local_anchor2;
+        let im1 = rb1.effective_inv_mass;
+        let im2 = rb2.effective_inv_mass;
+        let ii1 = rb1.effective_world_inv_inertia_sqrt.squared();
+        let ii2 = rb2.effective_world_inv_inertia_sqrt.squared();
+        let r1 = anchor1.translation.vector - rb1.world_com.coords;
+        let r2 = anchor2.translation.vector - rb2.world_com.coords;
         let rmat1 = r1.gcross_matrix();
         let rmat2 = r2.gcross_matrix();
 
@@ -113,9 +99,8 @@ impl FixedVelocityConstraint {
         #[cfg(feature = "dim3")]
         let inv_lhs = lhs.cholesky().expect("Singular system.").inverse();
 
-        let lin_dvel =
-            -vels1.linvel - vels1.angvel.gcross(r1) + vels2.linvel + vels2.angvel.gcross(r2);
-        let ang_dvel = -vels1.angvel + vels2.angvel;
+        let lin_dvel = -rb1.linvel - rb1.angvel.gcross(r1) + rb2.linvel + rb2.angvel.gcross(r2);
+        let ang_dvel = -rb1.angvel + rb2.angvel;
 
         #[cfg(feature = "dim2")]
         let mut rhs =
@@ -148,14 +133,14 @@ impl FixedVelocityConstraint {
 
         FixedVelocityConstraint {
             joint_id,
-            mj_lambda1: ids1.active_set_offset,
-            mj_lambda2: ids2.active_set_offset,
+            mj_lambda1: rb1.active_set_offset,
+            mj_lambda2: rb2.active_set_offset,
             im1,
             im2,
             ii1,
             ii2,
-            ii1_sqrt: mprops1.effective_world_inv_inertia_sqrt,
-            ii2_sqrt: mprops2.effective_world_inv_inertia_sqrt,
+            ii1_sqrt: rb1.effective_world_inv_inertia_sqrt,
+            ii2_sqrt: rb2.effective_world_inv_inertia_sqrt,
             impulse: cparams.impulse * params.warmstart_coeff,
             inv_lhs,
             r1,
@@ -246,12 +231,12 @@ pub(crate) struct FixedVelocityGroundConstraint {
     impulse: SpacialVector<Real>,
 
     #[cfg(feature = "dim3")]
-    inv_lhs: Matrix6<Real>, // FIXME: replace by Cholesky.
+    inv_lhs: Matrix6<Real>, // FIXME: replace with Cholesky.
     #[cfg(feature = "dim3")]
     rhs: Vector6<Real>,
 
     #[cfg(feature = "dim2")]
-    inv_lhs: Matrix3<Real>, // FIXME: replace by Cholesky.
+    inv_lhs: Matrix3<Real>, // FIXME: replace with Cholesky.
     #[cfg(feature = "dim2")]
     rhs: Vector3<Real>,
 
@@ -265,36 +250,28 @@ impl FixedVelocityGroundConstraint {
     pub fn from_params(
         params: &IntegrationParameters,
         joint_id: JointIndex,
-        rb1: (&RigidBodyPosition, &RigidBodyVelocity, &RigidBodyMassProps),
-        rb2: (
-            &RigidBodyPosition,
-            &RigidBodyVelocity,
-            &RigidBodyMassProps,
-            &RigidBodyIds,
-        ),
+        rb1: &RigidBody,
+        rb2: &RigidBody,
         cparams: &FixedJoint,
         flipped: bool,
     ) -> Self {
-        let (poss1, vels1, mprops1) = rb1;
-        let (poss2, vels2, mprops2, ids2) = rb2;
-
         let (anchor1, anchor2) = if flipped {
             (
-                poss1.position * cparams.local_frame2,
-                poss2.position * cparams.local_frame1,
+                rb1.position * cparams.local_anchor2,
+                rb2.position * cparams.local_anchor1,
             )
         } else {
             (
-                poss1.position * cparams.local_frame1,
-                poss2.position * cparams.local_frame2,
+                rb1.position * cparams.local_anchor1,
+                rb2.position * cparams.local_anchor2,
             )
         };
 
-        let r1 = anchor1.translation.vector - mprops1.world_com.coords;
+        let r1 = anchor1.translation.vector - rb1.world_com.coords;
 
-        let im2 = mprops2.effective_inv_mass;
-        let ii2 = mprops2.effective_world_inv_inertia_sqrt.squared();
-        let r2 = anchor2.translation.vector - mprops2.world_com.coords;
+        let im2 = rb2.effective_inv_mass;
+        let ii2 = rb2.effective_world_inv_inertia_sqrt.squared();
+        let r2 = anchor2.translation.vector - rb2.world_com.coords;
         let rmat2 = r2.gcross_matrix();
 
         #[allow(unused_mut)] // For 2D.
@@ -333,9 +310,8 @@ impl FixedVelocityGroundConstraint {
         #[cfg(feature = "dim3")]
         let inv_lhs = lhs.cholesky().expect("Singular system.").inverse();
 
-        let lin_dvel =
-            vels2.linvel + vels2.angvel.gcross(r2) - vels1.linvel - vels1.angvel.gcross(r1);
-        let ang_dvel = vels2.angvel - vels1.angvel;
+        let lin_dvel = rb2.linvel + rb2.angvel.gcross(r2) - rb1.linvel - rb1.angvel.gcross(r1);
+        let ang_dvel = rb2.angvel - rb1.angvel;
 
         #[cfg(feature = "dim2")]
         let mut rhs =
@@ -367,10 +343,10 @@ impl FixedVelocityGroundConstraint {
 
         FixedVelocityGroundConstraint {
             joint_id,
-            mj_lambda2: ids2.active_set_offset,
+            mj_lambda2: rb2.active_set_offset,
             im2,
             ii2,
-            ii2_sqrt: mprops2.effective_world_inv_inertia_sqrt,
+            ii2_sqrt: rb2.effective_world_inv_inertia_sqrt,
             impulse: cparams.impulse * params.warmstart_coeff,
             inv_lhs,
             r2,

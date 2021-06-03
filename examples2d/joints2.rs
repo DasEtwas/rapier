@@ -1,4 +1,6 @@
-use rapier2d::prelude::*;
+use na::Point2;
+use rapier2d::dynamics::{BallJoint, BodyStatus, JointSet, RigidBodyBuilder, RigidBodySet};
+use rapier2d::geometry::{ColliderBuilder, ColliderSet};
 use rapier_testbed2d::Testbed;
 
 pub fn init_world(testbed: &mut Testbed) {
@@ -13,7 +15,7 @@ pub fn init_world(testbed: &mut Testbed) {
      * Create the balls
      */
     // Build the rigid body.
-    // NOTE: a smaller radius (e.g. 0.1) breaks Box2D so
+    // NOTE: A smaller radius (e.g. 0.1) breaks Box2D so
     // in order to be able to compare rapier with Box2D,
     // we set it to 0.4.
     let rad = 0.4;
@@ -29,22 +31,22 @@ pub fn init_world(testbed: &mut Testbed) {
             let fi = i as f32;
 
             let status = if i == 0 && k == 0 {
-                RigidBodyType::Static
+                BodyStatus::Static
             } else {
-                RigidBodyType::Dynamic
+                BodyStatus::Dynamic
             };
 
             let rigid_body = RigidBodyBuilder::new(status)
-                .translation(vector![fk * shift, -fi * shift])
+                .translation(fk * shift, -fi * shift)
                 .build();
             let child_handle = bodies.insert(rigid_body);
             let collider = ColliderBuilder::ball(rad).build();
-            colliders.insert_with_parent(collider, child_handle, &mut bodies);
+            colliders.insert(collider, child_handle, &mut bodies);
 
             // Vertical joint.
             if i > 0 {
                 let parent_handle = *body_handles.last().unwrap();
-                let joint = BallJoint::new(Point::origin(), point![0.0, shift]);
+                let joint = BallJoint::new(Point2::origin(), Point2::new(0.0, shift));
                 joints.insert(&mut bodies, parent_handle, child_handle, joint);
             }
 
@@ -52,7 +54,7 @@ pub fn init_world(testbed: &mut Testbed) {
             if k > 0 {
                 let parent_index = body_handles.len() - numi;
                 let parent_handle = body_handles[parent_index];
-                let joint = BallJoint::new(Point::origin(), point![-shift, 0.0]);
+                let joint = BallJoint::new(Point2::origin(), Point2::new(-shift, 0.0));
                 joints.insert(&mut bodies, parent_handle, child_handle, joint);
             }
 
@@ -64,5 +66,10 @@ pub fn init_world(testbed: &mut Testbed) {
      * Set up the testbed.
      */
     testbed.set_world(bodies, colliders, joints);
-    testbed.look_at(point![numk as f32 * rad, numi as f32 * -rad], 20.0);
+    testbed.look_at(Point2::new(numk as f32 * rad, numi as f32 * -rad), 20.0);
+}
+
+fn main() {
+    let testbed = Testbed::from_builders(0, vec![("Joints", init_world)]);
+    testbed.run()
 }

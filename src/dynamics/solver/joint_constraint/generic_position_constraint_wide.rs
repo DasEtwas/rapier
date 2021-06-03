@@ -15,11 +15,7 @@ impl WGenericPositionConstraint {
         cparams: [&GenericJoint; SIMD_WIDTH],
     ) -> Self {
         Self {
-            constraints: gather![|ii| GenericPositionConstraint::from_params(
-                rbs1[ii],
-                rbs2[ii],
-                cparams[ii]
-            )],
+            constraints: array![|ii| GenericPositionConstraint::from_params(rbs1[ii], rbs2[ii], cparams[ii]); SIMD_WIDTH],
         }
     }
 
@@ -43,12 +39,7 @@ impl WGenericPositionGroundConstraint {
         flipped: [bool; SIMD_WIDTH],
     ) -> Self {
         Self {
-            constraints: gather![|ii| GenericPositionGroundConstraint::from_params(
-                rbs1[ii],
-                rbs2[ii],
-                cparams[ii],
-                flipped[ii]
-            )],
+            constraints: array![|ii| GenericPositionGroundConstraint::from_params(rbs1[ii], rbs2[ii], cparams[ii], flipped[ii]); SIMD_WIDTH],
         }
     }
 

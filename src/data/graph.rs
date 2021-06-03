@@ -176,7 +176,7 @@ impl<N, E> Graph<N, E> {
             weight,
             next: [EdgeIndex::end(), EdgeIndex::end()],
         };
-        assert!(self.nodes.len() != crate::INVALID_USIZE);
+        assert_ne!(self.nodes.len(), crate::INVALID_USIZE);
         let node_idx = NodeIndex::new(self.nodes.len() as u32);
         self.nodes.push(node);
         node_idx
@@ -217,7 +217,7 @@ impl<N, E> Graph<N, E> {
     /// **Note:** `Graph` allows adding parallel (“duplicate”) edges. If you want
     /// to avoid this, use [`.update_edge(a, b, weight)`](#method.update_edge) instead.
     pub fn add_edge(&mut self, a: NodeIndex, b: NodeIndex, weight: E) -> EdgeIndex {
-        assert!(self.edges.len() != crate::INVALID_USIZE);
+        assert_ne!(self.edges.len(), crate::INVALID_USIZE);
         let edge_idx = EdgeIndex::new(self.edges.len() as u32);
         let mut edge = Edge {
             weight,

@@ -1,13 +1,13 @@
 use crate::data::graph::{Direction, EdgeIndex, Graph, NodeIndex};
 
-/// Index of a node of the interaction graph.
+/// Index of a node of an interaction graph.
 pub type ColliderGraphIndex = NodeIndex;
-/// Index of a node of the interaction graph.
+/// Index of a node of an interaction graph.
 pub type RigidBodyGraphIndex = NodeIndex;
-/// Temporary index to and edge of the interaction graph.
+/// Temporary index to an edge of the interaction graph.
 pub type TemporaryInteractionIndex = EdgeIndex;
 
-/// A graph where nodes are collision objects and edges are contact or proximity algorithms.
+/// A graph in which nodes are collision objects and edges are contact or proximity algorithms.
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[derive(Clone)]
 pub struct InteractionGraph<N, E> {

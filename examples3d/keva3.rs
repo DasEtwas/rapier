@@ -1,12 +1,14 @@
-use rapier3d::prelude::*;
+use na::{Point3, Vector3};
+use rapier3d::dynamics::{JointSet, RigidBodyBuilder, RigidBodySet};
+use rapier3d::geometry::{ColliderBuilder, ColliderSet};
 use rapier_testbed3d::Testbed;
 
 pub fn build_block(
     testbed: &mut Testbed,
     bodies: &mut RigidBodySet,
     colliders: &mut ColliderSet,
-    half_extents: Vector<f32>,
-    shift: Vector<f32>,
+    half_extents: Vector3<f32>,
+    shift: Vector3<f32>,
     mut numx: usize,
     numy: usize,
     mut numz: usize,
@@ -15,8 +17,8 @@ pub fn build_block(
     let block_width = 2.0 * half_extents.z * numx as f32;
     let block_height = 2.0 * half_extents.y * numy as f32;
     let spacing = (half_extents.z * numx as f32 - half_extents.x) / (numz as f32 - 1.0);
-    let mut color0 = [0.7, 0.5, 0.9];
-    let mut color1 = [0.6, 1.0, 0.6];
+    let mut color0 = Point3::new(0.7, 0.5, 0.9);
+    let mut color1 = Point3::new(0.6, 1.0, 0.6);
 
     for i in 0..numy {
         std::mem::swap(&mut numx, &mut numz);
@@ -39,17 +41,17 @@ pub fn build_block(
 
                 // Build the rigid body.
                 let rigid_body = RigidBodyBuilder::new_dynamic()
-                    .translation(vector![
+                    .translation(
                         x + dim.x + shift.x,
                         y + dim.y + shift.y,
-                        z + dim.z + shift.z
-                    ])
+                        z + dim.z + shift.z,
+                    )
                     .build();
                 let handle = bodies.insert(rigid_body);
                 let collider = ColliderBuilder::cuboid(dim.x, dim.y, dim.z).build();
-                colliders.insert_with_parent(collider, handle, bodies);
+                colliders.insert(collider, handle, bodies);
 
-                testbed.set_initial_body_color(handle, color0);
+                testbed.set_body_color(handle, color0);
                 std::mem::swap(&mut color0, &mut color1);
             }
         }
@@ -62,16 +64,16 @@ pub fn build_block(
         for j in 0..(block_width / (dim.z as f32 * 2.0)) as usize {
             // Build the rigid body.
             let rigid_body = RigidBodyBuilder::new_dynamic()
-                .translation(vector![
+                .translation(
                     i as f32 * dim.x * 2.0 + dim.x + shift.x,
                     dim.y + shift.y + block_height,
-                    j as f32 * dim.z * 2.0 + dim.z + shift.z
-                ])
+                    j as f32 * dim.z * 2.0 + dim.z + shift.z,
+                )
                 .build();
             let handle = bodies.insert(rigid_body);
             let collider = ColliderBuilder::cuboid(dim.x, dim.y, dim.z).build();
-            colliders.insert_with_parent(collider, handle, bodies);
-            testbed.set_initial_body_color(handle, color0);
+            colliders.insert(collider, handle, bodies);
+            testbed.set_body_color(handle, color0);
             std::mem::swap(&mut color0, &mut color1);
         }
     }
@@ -92,16 +94,16 @@ pub fn init_world(testbed: &mut Testbed) {
     let ground_height = 0.1;
 
     let rigid_body = RigidBodyBuilder::new_static()
-        .translation(vector![0.0, -ground_height, 0.0])
+        .translation(0.0, -ground_height, 0.0)
         .build();
     let handle = bodies.insert(rigid_body);
     let collider = ColliderBuilder::cuboid(ground_size, ground_height, ground_size).build();
-    colliders.insert_with_parent(collider, handle, &mut bodies);
+    colliders.insert(collider, handle, &mut bodies);
 
     /*
      * Create the cubes
      */
-    let half_extents = vector![0.02, 0.1, 0.4] / 2.0 * 10.0;
+    let half_extents = Vector3::new(0.02, 0.1, 0.4) / 2.0 * 10.0;
     let mut block_height = 0.0;
     // These should only be set to odd values otherwise
     // the blocks won't align in the nicest way.
@@ -118,7 +120,7 @@ pub fn init_world(testbed: &mut Testbed) {
             &mut bodies,
             &mut colliders,
             half_extents,
-            vector![-block_width / 2.0, block_height, -block_width / 2.0],
+            Vector3::new(-block_width / 2.0, block_height, -block_width / 2.0),
             numx,
             numy,
             numz,
@@ -133,5 +135,10 @@ pub fn init_world(testbed: &mut Testbed) {
      * Set up the testbed.
      */
     testbed.set_world(bodies, colliders, joints);
-    testbed.look_at(point![100.0, 100.0, 100.0], Point::origin());
+    testbed.look_at(Point3::new(100.0, 100.0, 100.0), Point3::origin());
+}
+
+fn main() {
+    let testbed = Testbed::from_builders(0, vec![("Boxes", init_world)]);
+    testbed.run()
 }

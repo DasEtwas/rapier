@@ -1,8 +1,7 @@
-use crate::data::{BundleSet, ComponentSet};
 use crate::dynamics::solver::VelocityGroundConstraint;
 #[cfg(feature = "simd-is-enabled")]
 use crate::dynamics::solver::{WVelocityConstraint, WVelocityGroundConstraint};
-use crate::dynamics::{IntegrationParameters, RigidBodyIds, RigidBodyMassProps, RigidBodyVelocity};
+use crate::dynamics::{IntegrationParameters, RigidBodySet};
 use crate::geometry::{ContactManifold, ContactManifoldIndex};
 use crate::math::{Real, Vector, DIM, MAX_MANIFOLD_POINTS};
 use crate::utils::{WAngularInertia, WBasis, WCross, WDot};
@@ -18,7 +17,8 @@ pub(crate) enum AnyVelocityConstraint {
     GroupedGround(WVelocityGroundConstraint),
     #[cfg(feature = "simd-is-enabled")]
     Grouped(WVelocityConstraint),
-    #[allow(dead_code)] // The Empty variant is only used with parallel code.
+    #[allow(dead_code)]
+    // The Empty variant is only used with parallel code.
     Empty,
 }
 
@@ -80,11 +80,14 @@ impl AnyVelocityConstraint {
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct VelocityConstraint {
-    pub dir1: Vector<Real>, // Non-penetration force direction for the first body.
+    // Non-penetration force direction for the first body.
+    pub dir1: Vector<Real>,
     #[cfg(feature = "dim3")]
-    pub tangent1: Vector<Real>, // One of the friction force directions.
+    // One of the friction force directions.
+    pub tangent1: Vector<Real>,
     #[cfg(feature = "dim3")]
-    pub tangent_rot1: na::UnitComplex<Real>, // Orientation of the tangent basis wrt. the reference basis.
+    // Orientation of the tangent basis wrt. the reference basis.
+    pub tangent_rot1: na::UnitComplex<Real>,
     pub im1: Real,
     pub im2: Real,
     pub limit: Real,
@@ -103,32 +106,23 @@ impl VelocityConstraint {
         manifold.data.solver_contacts.len() / MAX_MANIFOLD_POINTS + rest as usize
     }
 
-    pub fn generate<Bodies>(
+    pub fn generate(
         params: &IntegrationParameters,
         manifold_id: ContactManifoldIndex,
         manifold: &ContactManifold,
-        bodies: &Bodies,
+        bodies: &RigidBodySet,
         out_constraints: &mut Vec<AnyVelocityConstraint>,
         push: bool,
-    ) where
-        Bodies: ComponentSet<RigidBodyIds>
-            + ComponentSet<RigidBodyVelocity>
-            + ComponentSet<RigidBodyMassProps>,
-    {
+    ) {
         assert_eq!(manifold.data.relative_dominance, 0);
 
         let inv_dt = params.inv_dt();
         let velocity_based_erp_inv_dt = params.velocity_based_erp_inv_dt();
 
-        let handle1 = manifold.data.rigid_body1.unwrap();
-        let handle2 = manifold.data.rigid_body2.unwrap();
-        let (ids1, vels1, mprops1): (&RigidBodyIds, &RigidBodyVelocity, &RigidBodyMassProps) =
-            bodies.index_bundle(handle1.0);
-        let (ids2, vels2, mprops2): (&RigidBodyIds, &RigidBodyVelocity, &RigidBodyMassProps) =
-            bodies.index_bundle(handle2.0);
-
-        let mj_lambda1 = ids1.active_set_offset;
-        let mj_lambda2 = ids2.active_set_offset;
+        let rb1 = &bodies[manifold.data.body_pair.body1];
+        let rb2 = &bodies[manifold.data.body_pair.body2];
+        let mj_lambda1 = rb1.active_set_offset;
+        let mj_lambda2 = rb2.active_set_offset;
         let force_dir1 = -manifold.data.normal;
         let warmstart_coeff = manifold.data.warmstart_multiplier * params.warmstart_coeff;
 
@@ -136,7 +130,7 @@ impl VelocityConstraint {
         let tangents1 = force_dir1.orthonormal_basis();
         #[cfg(feature = "dim3")]
         let (tangents1, tangent_rot1) =
-            super::compute_tangent_contact_directions(&force_dir1, &vels1.linvel, &vels2.linvel);
+            super::compute_tangent_contact_directions(&force_dir1, &rb1.linvel, &rb2.linvel);
 
         for (_l, manifold_points) in manifold
             .data
@@ -152,8 +146,8 @@ impl VelocityConstraint {
                 #[cfg(feature = "dim3")]
                 tangent_rot1,
                 elements: [VelocityConstraintElement::zero(); MAX_MANIFOLD_POINTS],
-                im1: mprops1.effective_inv_mass,
-                im2: mprops2.effective_inv_mass,
+                im1: rb1.effective_inv_mass,
+                im2: rb2.effective_inv_mass,
                 limit: 0.0,
                 mj_lambda1,
                 mj_lambda2,
@@ -200,8 +194,8 @@ impl VelocityConstraint {
                     constraint.tangent1 = tangents1[0];
                     constraint.tangent_rot1 = tangent_rot1;
                 }
-                constraint.im1 = mprops1.effective_inv_mass;
-                constraint.im2 = mprops2.effective_inv_mass;
+                constraint.im1 = rb1.effective_inv_mass;
+                constraint.im2 = rb2.effective_inv_mass;
                 constraint.limit = 0.0;
                 constraint.mj_lambda1 = mj_lambda1;
                 constraint.mj_lambda2 = mj_lambda2;
@@ -212,11 +206,11 @@ impl VelocityConstraint {
 
             for k in 0..manifold_points.len() {
                 let manifold_point = &manifold_points[k];
-                let dp1 = manifold_point.point - mprops1.world_com;
-                let dp2 = manifold_point.point - mprops2.world_com;
+                let dp1 = manifold_point.point - rb1.world_com;
+                let dp2 = manifold_point.point - rb2.world_com;
 
-                let vel1 = vels1.linvel + vels1.angvel.gcross(dp1);
-                let vel2 = vels2.linvel + vels2.angvel.gcross(dp2);
+                let vel1 = rb1.linvel + rb1.angvel.gcross(dp1);
+                let vel2 = rb2.linvel + rb2.angvel.gcross(dp2);
 
                 let warmstart_correction;
 
@@ -225,16 +219,16 @@ impl VelocityConstraint {
 
                 // Normal part.
                 {
-                    let gcross1 = mprops1
+                    let gcross1 = rb1
                         .effective_world_inv_inertia_sqrt
                         .transform_vector(dp1.gcross(force_dir1));
-                    let gcross2 = mprops2
+                    let gcross2 = rb2
                         .effective_world_inv_inertia_sqrt
                         .transform_vector(dp2.gcross(-force_dir1));
 
                     let r = 1.0
-                        / (mprops1.effective_inv_mass
-                            + mprops2.effective_inv_mass
+                        / (rb1.effective_inv_mass
+                            + rb2.effective_inv_mass
                             + gcross1.gdot(gcross1)
                             + gcross2.gdot(gcross2));
 
@@ -271,15 +265,15 @@ impl VelocityConstraint {
                     constraint.elements[k].tangent_part.impulse = impulse;
 
                     for j in 0..DIM - 1 {
-                        let gcross1 = mprops1
+                        let gcross1 = rb1
                             .effective_world_inv_inertia_sqrt
                             .transform_vector(dp1.gcross(tangents1[j]));
-                        let gcross2 = mprops2
+                        let gcross2 = rb2
                             .effective_world_inv_inertia_sqrt
                             .transform_vector(dp2.gcross(-tangents1[j]));
                         let r = 1.0
-                            / (mprops1.effective_inv_mass
-                                + mprops2.effective_inv_mass
+                            / (rb1.effective_inv_mass
+                                + rb2.effective_inv_mass
                                 + gcross1.gdot(gcross1)
                                 + gcross2.gdot(gcross2));
                         let rhs =
@@ -385,13 +379,7 @@ where
     let relative_linvel = linvel1 - linvel2;
     let mut tangent_relative_linvel =
         relative_linvel - force_dir1 * (force_dir1.dot(&relative_linvel));
-
-    let tangent_linvel_norm = {
-        let _disable_fe_except =
-            crate::utils::DisableFloatingPointExceptionsFlags::disable_floating_point_exceptions();
-        tangent_relative_linvel.normalize_mut()
-    };
-
+    let tangent_linvel_norm = tangent_relative_linvel.normalize_mut();
     let threshold: N::Element = na::convert(1.0e-4);
     let use_fallback = tangent_linvel_norm.simd_lt(N::splat(threshold));
     let tangent_fallback = force_dir1.orthonormal_vector();
@@ -399,13 +387,14 @@ where
     let tangent1 = tangent_fallback.select(use_fallback, tangent_relative_linvel);
     let bitangent1 = force_dir1.cross(&tangent1);
 
-    // Rotation such that: rot * tangent_fallback = tangent1
-    // (when projected in the tangent plane.) This is needed to ensure the
-    // warmstart impulse has the correct orientation. Indeed, at frame n + 1,
-    // we need to reapply the same impulse as we did in frame n. However the
-    // basis on which the tangent impulse is expresses may change at each frame
+    // Compute a rotation such that: rot * tangent_fallback = tangent1 (when projected in the tangent plane.)
+    //
+    // This is needed to ensure the warmstart impulse has the correct orientation.
+    // Indeed, at frame n + 1, we need to reapply the same impulse as we did in frame n.
+    // However, the basis on which the tangent impulse is expressed may change in each frame
     // (because the the relative linvel may change direction at each frame).
-    // So we need this rotation to:
+    //
+    // So, we need this rotation to:
     // - Project the impulse back to the "reference" basis at after friction is resolved.
     // - Project the old impulse on the new basis before the friction is resolved.
     let rot = na::UnitComplex::new_unchecked(na::Complex::new(

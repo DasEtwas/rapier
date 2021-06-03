@@ -10,14 +10,14 @@ pub struct StagesCounters {
     pub collision_detection_time: Timer,
     /// Time spent for the computation of collision island and body activation/deactivation (sleeping).
     pub island_construction_time: Timer,
-    /// Total time spent for the constraints resolution and position update.t
+    /// Total time spent for the constraints resolution and position update.
     pub solver_time: Timer,
     /// Total time spent for CCD and CCD resolution.
     pub ccd_time: Timer,
 }
 
 impl StagesCounters {
-    /// Create a new counter intialized to zero.
+    /// Create a new counter initialized to zero.
     pub fn new() -> Self {
         StagesCounters {
             update_time: Timer::new(),

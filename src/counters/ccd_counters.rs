@@ -6,7 +6,7 @@ use std::fmt::{Display, Formatter, Result};
 pub struct CCDCounters {
     /// The number of substeps actually performed by the CCD resolution.
     pub num_substeps: usize,
-    /// The total time spent for TOI computation in the CCD resolution.
+    /// The total time spent for TOI computation in the CCD resolution.
     pub toi_computation_time: Timer,
     /// The total time spent for force computation and integration in the CCD resolution.
     pub solver_time: Timer,

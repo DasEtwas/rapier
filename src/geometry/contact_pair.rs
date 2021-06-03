@@ -1,5 +1,5 @@
-use crate::dynamics::RigidBodyHandle;
-use crate::geometry::{ColliderHandle, Contact, ContactManifold};
+use crate::dynamics::{BodyPair, RigidBodyHandle};
+use crate::geometry::{ColliderPair, Contact, ContactManifold};
 use crate::math::{Point, Real, Vector};
 use parry::query::ContactManifoldsWorkspace;
 
@@ -10,6 +10,9 @@ bitflags::bitflags! {
         /// The constraint solver will take this contact manifold into
         /// account for force computation.
         const COMPUTE_IMPULSES = 0b001;
+        /// The user-defined physics hooks will be used to
+        /// modify the solver contacts of this contact manifold.
+        const MODIFY_SOLVER_CONTACTS = 0b010;
     }
 }
 
@@ -21,9 +24,9 @@ impl Default for SolverFlags {
 
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
-/// A single contact between two collider.
+/// A single contact between two colliders.
 pub struct ContactData {
-    /// The impulse, along the contact normal, applied by this contact to the first collider's rigid-body.
+    /// The impulse along the contact normal, applied by this contact to the first collider's rigid-body.
     ///
     /// The impulse applied to the second collider's rigid-body is given by `-impulse`.
     pub impulse: Real,
@@ -53,10 +56,8 @@ impl Default for ContactData {
 #[derive(Clone)]
 /// The description of all the contacts between a pair of colliders.
 pub struct ContactPair {
-    /// The first collider involved in the contact pair.
-    pub collider1: ColliderHandle,
-    /// The second collider involved in the contact pair.
-    pub collider2: ColliderHandle,
+    /// The pair of colliders involved.
+    pub pair: ColliderPair,
     /// The set of contact manifolds between the two colliders.
     ///
     /// All contact manifold contain themselves contact points between the colliders.
@@ -67,10 +68,9 @@ pub struct ContactPair {
 }
 
 impl ContactPair {
-    pub(crate) fn new(collider1: ColliderHandle, collider2: ColliderHandle) -> Self {
+    pub(crate) fn new(pair: ColliderPair) -> Self {
         Self {
-            collider1,
-            collider2,
+            pair,
             has_any_active_contact: false,
             manifolds: Vec::new(),
             workspace: None,
@@ -115,10 +115,8 @@ impl ContactPair {
 /// part of the same contact manifold share the same contact normal and contact kinematics.
 pub struct ContactManifoldData {
     // The following are set by the narrow-phase.
-    /// The first rigid-body involved in this contact manifold.
-    pub rigid_body1: Option<RigidBodyHandle>,
-    /// The second rigid-body involved in this contact manifold.
-    pub rigid_body2: Option<RigidBodyHandle>,
+    /// The pair of body involved in this contact manifold.
+    pub body_pair: BodyPair,
     pub(crate) warmstart_multiplier: Real,
     // The two following are set by the constraints solver.
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
@@ -134,7 +132,7 @@ pub struct ContactManifoldData {
     // to this field as well.
     pub normal: Vector<Real>,
     /// The contacts that will be seen by the constraints solver for computing forces.
-    // NOTE: unfortunately, we can't ignore this field when serialize
+    // NOTE: unfortunately, we can't ignore this field when serializing
     // the contact manifold data. The reason is that the solver contacts
     // won't be updated for sleeping bodies. So it means that for one
     // frame, we won't have any solver contacts when waking up an island
@@ -209,19 +207,17 @@ impl SolverContact {
 
 impl Default for ContactManifoldData {
     fn default() -> Self {
-        Self::new(None, None, SolverFlags::empty())
+        Self::new(
+            BodyPair::new(RigidBodyHandle::invalid(), RigidBodyHandle::invalid()),
+            SolverFlags::empty(),
+        )
     }
 }
 
 impl ContactManifoldData {
-    pub(crate) fn new(
-        rigid_body1: Option<RigidBodyHandle>,
-        rigid_body2: Option<RigidBodyHandle>,
-        solver_flags: SolverFlags,
-    ) -> ContactManifoldData {
+    pub(crate) fn new(body_pair: BodyPair, solver_flags: SolverFlags) -> ContactManifoldData {
         Self {
-            rigid_body1,
-            rigid_body2,
+            body_pair,
             warmstart_multiplier: Self::min_warmstart_multiplier(),
             constraint_index: 0,
             position_constraint_index: 0,

@@ -1,14 +1,13 @@
 //! # Rapier
 //!
 //! Rapier is a set of two Rust crates `rapier2d` and `rapier3d` for efficient cross-platform
-//! physics simulation. It target application include video games, animation, robotics, etc.
+//! physics simulation. It is built to be used in video games, animation, robotics, etc.
 //!
 //! Rapier has some unique features for collaborative applications:
 //! - The ability to snapshot the state of the physics engine, and restore it later.
 //! - The ability to run a perfectly deterministic simulation on different machine, as long as they
 //! are compliant with the IEEE 754-2008 floating point standard.
 
-#![deny(bare_trait_objects)]
 #![warn(missing_docs)]
 
 #[cfg(all(feature = "dim2", feature = "f32"))]
@@ -50,8 +49,8 @@ macro_rules! enable_flush_to_zero(
 );
 
 #[cfg(feature = "simd-is-enabled")]
-macro_rules! gather(
-    ($callback: expr) => {
+macro_rules! array(
+    ($callback: expr; SIMD_WIDTH) => {
         {
             #[inline(always)]
             #[allow(dead_code)]
@@ -123,6 +122,7 @@ macro_rules! try_ret {
 // }
 
 pub(crate) const INVALID_U32: u32 = u32::MAX;
+pub(crate) const INVALID_U64: u64 = u64::MAX;
 pub(crate) const INVALID_USIZE: usize = INVALID_U32 as usize;
 
 /// The string version of Rapier.
@@ -148,14 +148,4 @@ pub mod math {
     /// single contact constraint.
     #[cfg(feature = "dim3")]
     pub const MAX_MANIFOLD_POINTS: usize = 4;
-}
-
-/// Prelude containing the common types defined by Rapier.
-pub mod prelude {
-    pub use crate::dynamics::*;
-    pub use crate::geometry::*;
-    pub use crate::math::*;
-    pub use crate::pipeline::*;
-    pub use na::{point, vector, DMatrix, DVector};
-    pub extern crate nalgebra;
 }

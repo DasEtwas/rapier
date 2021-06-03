@@ -16,11 +16,9 @@ use super::{WRevoluteVelocityConstraint, WRevoluteVelocityGroundConstraint};
 // use crate::dynamics::solver::joint_constraint::generic_velocity_constraint::{
 //     GenericVelocityConstraint, GenericVelocityGroundConstraint,
 // };
-use crate::data::{BundleSet, ComponentSet};
 use crate::dynamics::solver::DeltaVel;
 use crate::dynamics::{
-    IntegrationParameters, Joint, JointGraphEdge, JointIndex, JointParams, RigidBodyIds,
-    RigidBodyMassProps, RigidBodyPosition, RigidBodyType, RigidBodyVelocity,
+    IntegrationParameters, Joint, JointGraphEdge, JointIndex, JointParams, RigidBodySet,
 };
 use crate::math::Real;
 #[cfg(feature = "simd-is-enabled")]
@@ -71,30 +69,14 @@ impl AnyJointVelocityConstraint {
         1
     }
 
-    pub fn from_joint<Bodies>(
+    pub fn from_joint(
         params: &IntegrationParameters,
         joint_id: JointIndex,
         joint: &Joint,
-        bodies: &Bodies,
-    ) -> Self
-    where
-        Bodies: ComponentSet<RigidBodyPosition>
-            + ComponentSet<RigidBodyVelocity>
-            + ComponentSet<RigidBodyMassProps>
-            + ComponentSet<RigidBodyIds>,
-    {
-        let rb1 = (
-            bodies.index(joint.body1.0),
-            bodies.index(joint.body1.0),
-            bodies.index(joint.body1.0),
-            bodies.index(joint.body1.0),
-        );
-        let rb2 = (
-            bodies.index(joint.body2.0),
-            bodies.index(joint.body2.0),
-            bodies.index(joint.body2.0),
-            bodies.index(joint.body2.0),
-        );
+        bodies: &RigidBodySet,
+    ) -> Self {
+        let rb1 = &bodies[joint.body1];
+        let rb2 = &bodies[joint.body2];
 
         match &joint.params {
             JointParams::BallJoint(p) => AnyJointVelocityConstraint::BallConstraint(
@@ -117,59 +99,45 @@ impl AnyJointVelocityConstraint {
     }
 
     #[cfg(feature = "simd-is-enabled")]
-    pub fn from_wide_joint<Bodies>(
+    pub fn from_wide_joint(
         params: &IntegrationParameters,
         joint_id: [JointIndex; SIMD_WIDTH],
         joints: [&Joint; SIMD_WIDTH],
-        bodies: &Bodies,
-    ) -> Self
-    where
-        Bodies: ComponentSet<RigidBodyPosition>
-            + ComponentSet<RigidBodyVelocity>
-            + ComponentSet<RigidBodyMassProps>
-            + ComponentSet<RigidBodyIds>,
-    {
-        let rbs1 = (
-            gather![|ii| bodies.index(joints[ii].body1.0)],
-            gather![|ii| bodies.index(joints[ii].body1.0)],
-            gather![|ii| bodies.index(joints[ii].body1.0)],
-            gather![|ii| bodies.index(joints[ii].body1.0)],
-        );
-        let rbs2 = (
-            gather![|ii| bodies.index(joints[ii].body2.0)],
-            gather![|ii| bodies.index(joints[ii].body2.0)],
-            gather![|ii| bodies.index(joints[ii].body2.0)],
-            gather![|ii| bodies.index(joints[ii].body2.0)],
-        );
+        bodies: &RigidBodySet,
+    ) -> Self {
+        let rbs1 = array![|ii| &bodies[joints[ii].body1]; SIMD_WIDTH];
+        let rbs2 = array![|ii| &bodies[joints[ii].body2]; SIMD_WIDTH];
 
         match &joints[0].params {
             JointParams::BallJoint(_) => {
-                let joints = gather![|ii| joints[ii].params.as_ball_joint().unwrap()];
+                let joints = array![|ii| joints[ii].params.as_ball_joint().unwrap(); SIMD_WIDTH];
                 AnyJointVelocityConstraint::WBallConstraint(WBallVelocityConstraint::from_params(
                     params, joint_id, rbs1, rbs2, joints,
                 ))
             }
             JointParams::FixedJoint(_) => {
-                let joints = gather![|ii| joints[ii].params.as_fixed_joint().unwrap()];
+                let joints = array![|ii| joints[ii].params.as_fixed_joint().unwrap(); SIMD_WIDTH];
                 AnyJointVelocityConstraint::WFixedConstraint(WFixedVelocityConstraint::from_params(
                     params, joint_id, rbs1, rbs2, joints,
                 ))
             }
             // JointParams::GenericJoint(_) => {
-            //     let joints = gather![|ii| joints[ii].params.as_generic_joint().unwrap()];
+            //     let joints = array![|ii| joints[ii].params.as_generic_joint().unwrap(); SIMD_WIDTH];
             //     AnyJointVelocityConstraint::WGenericConstraint(
             //         WGenericVelocityConstraint::from_params(params, joint_id, rbs1, rbs2, joints),
             //     )
             // }
             JointParams::PrismaticJoint(_) => {
-                let joints = gather![|ii| joints[ii].params.as_prismatic_joint().unwrap()];
+                let joints =
+                    array![|ii| joints[ii].params.as_prismatic_joint().unwrap(); SIMD_WIDTH];
                 AnyJointVelocityConstraint::WPrismaticConstraint(
                     WPrismaticVelocityConstraint::from_params(params, joint_id, rbs1, rbs2, joints),
                 )
             }
             #[cfg(feature = "dim3")]
             JointParams::RevoluteJoint(_) => {
-                let joints = gather![|ii| joints[ii].params.as_revolute_joint().unwrap()];
+                let joints =
+                    array![|ii| joints[ii].params.as_revolute_joint().unwrap(); SIMD_WIDTH];
                 AnyJointVelocityConstraint::WRevoluteConstraint(
                     WRevoluteVelocityConstraint::from_params(params, joint_id, rbs1, rbs2, joints),
                 )
@@ -177,30 +145,19 @@ impl AnyJointVelocityConstraint {
         }
     }
 
-    pub fn from_joint_ground<Bodies>(
+    pub fn from_joint_ground(
         params: &IntegrationParameters,
         joint_id: JointIndex,
         joint: &Joint,
-        bodies: &Bodies,
-    ) -> Self
-    where
-        Bodies: ComponentSet<RigidBodyPosition>
-            + ComponentSet<RigidBodyType>
-            + ComponentSet<RigidBodyVelocity>
-            + ComponentSet<RigidBodyMassProps>
-            + ComponentSet<RigidBodyIds>,
-    {
-        let mut handle1 = joint.body1;
-        let mut handle2 = joint.body2;
-        let status2: &RigidBodyType = bodies.index(handle2.0);
-        let flipped = !status2.is_dynamic();
+        bodies: &RigidBodySet,
+    ) -> Self {
+        let mut rb1 = &bodies[joint.body1];
+        let mut rb2 = &bodies[joint.body2];
+        let flipped = !rb2.is_dynamic();
 
         if flipped {
-            std::mem::swap(&mut handle1, &mut handle2);
+            std::mem::swap(&mut rb1, &mut rb2);
         }
-
-        let rb1 = bodies.index_bundle(handle1.0);
-        let rb2 = bodies.index_bundle(handle2.0);
 
         match &joint.params {
             JointParams::BallJoint(p) => AnyJointVelocityConstraint::BallGroundConstraint(
@@ -229,46 +186,26 @@ impl AnyJointVelocityConstraint {
     }
 
     #[cfg(feature = "simd-is-enabled")]
-    pub fn from_wide_joint_ground<Bodies>(
+    pub fn from_wide_joint_ground(
         params: &IntegrationParameters,
         joint_id: [JointIndex; SIMD_WIDTH],
         joints: [&Joint; SIMD_WIDTH],
-        bodies: &Bodies,
-    ) -> Self
-    where
-        Bodies: ComponentSet<RigidBodyPosition>
-            + ComponentSet<RigidBodyType>
-            + ComponentSet<RigidBodyVelocity>
-            + ComponentSet<RigidBodyMassProps>
-            + ComponentSet<RigidBodyIds>,
-    {
-        let mut handles1 = gather![|ii| joints[ii].body1];
-        let mut handles2 = gather![|ii| joints[ii].body2];
-        let status2: [&RigidBodyType; SIMD_WIDTH] = gather![|ii| bodies.index(handles2[ii].0)];
+        bodies: &RigidBodySet,
+    ) -> Self {
+        let mut rbs1 = array![|ii| &bodies[joints[ii].body1]; SIMD_WIDTH];
+        let mut rbs2 = array![|ii| &bodies[joints[ii].body2]; SIMD_WIDTH];
         let mut flipped = [false; SIMD_WIDTH];
 
         for ii in 0..SIMD_WIDTH {
-            if !status2[ii].is_dynamic() {
-                std::mem::swap(&mut handles1[ii], &mut handles2[ii]);
+            if !rbs2[ii].is_dynamic() {
+                std::mem::swap(&mut rbs1[ii], &mut rbs2[ii]);
                 flipped[ii] = true;
             }
         }
 
-        let rbs1 = (
-            gather![|ii| bodies.index(handles1[ii].0)],
-            gather![|ii| bodies.index(handles1[ii].0)],
-            gather![|ii| bodies.index(handles1[ii].0)],
-        );
-        let rbs2 = (
-            gather![|ii| bodies.index(handles2[ii].0)],
-            gather![|ii| bodies.index(handles2[ii].0)],
-            gather![|ii| bodies.index(handles2[ii].0)],
-            gather![|ii| bodies.index(handles2[ii].0)],
-        );
-
         match &joints[0].params {
             JointParams::BallJoint(_) => {
-                let joints = gather![|ii| joints[ii].params.as_ball_joint().unwrap()];
+                let joints = array![|ii| joints[ii].params.as_ball_joint().unwrap(); SIMD_WIDTH];
                 AnyJointVelocityConstraint::WBallGroundConstraint(
                     WBallVelocityGroundConstraint::from_params(
                         params, joint_id, rbs1, rbs2, joints, flipped,
@@ -276,7 +213,7 @@ impl AnyJointVelocityConstraint {
                 )
             }
             JointParams::FixedJoint(_) => {
-                let joints = gather![|ii| joints[ii].params.as_fixed_joint().unwrap()];
+                let joints = array![|ii| joints[ii].params.as_fixed_joint().unwrap(); SIMD_WIDTH];
                 AnyJointVelocityConstraint::WFixedGroundConstraint(
                     WFixedVelocityGroundConstraint::from_params(
                         params, joint_id, rbs1, rbs2, joints, flipped,
@@ -284,7 +221,7 @@ impl AnyJointVelocityConstraint {
                 )
             }
             // JointParams::GenericJoint(_) => {
-            //     let joints = gather![|ii| joints[ii].params.as_generic_joint().unwrap()];
+            //     let joints = array![|ii| joints[ii].params.as_generic_joint().unwrap(); SIMD_WIDTH];
             //     AnyJointVelocityConstraint::WGenericGroundConstraint(
             //         WGenericVelocityGroundConstraint::from_params(
             //             params, joint_id, rbs1, rbs2, joints, flipped,
@@ -292,7 +229,8 @@ impl AnyJointVelocityConstraint {
             //     )
             // }
             JointParams::PrismaticJoint(_) => {
-                let joints = gather![|ii| joints[ii].params.as_prismatic_joint().unwrap()];
+                let joints =
+                    array![|ii| joints[ii].params.as_prismatic_joint().unwrap(); SIMD_WIDTH];
                 AnyJointVelocityConstraint::WPrismaticGroundConstraint(
                     WPrismaticVelocityGroundConstraint::from_params(
                         params, joint_id, rbs1, rbs2, joints, flipped,
@@ -301,7 +239,8 @@ impl AnyJointVelocityConstraint {
             }
             #[cfg(feature = "dim3")]
             JointParams::RevoluteJoint(_) => {
-                let joints = gather![|ii| joints[ii].params.as_revolute_joint().unwrap()];
+                let joints =
+                    array![|ii| joints[ii].params.as_revolute_joint().unwrap(); SIMD_WIDTH];
                 AnyJointVelocityConstraint::WRevoluteGroundConstraint(
                     WRevoluteVelocityGroundConstraint::from_params(
                         params, joint_id, rbs1, rbs2, joints, flipped,

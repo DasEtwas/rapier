@@ -55,17 +55,15 @@ impl NPhysicsWorld {
         }
 
         for (_, collider) in colliders.iter() {
-            if let Some(parent_handle) = collider.parent() {
-                let parent = &bodies[parent_handle];
-                let nphysics_rb_handle = rapier2nphysics[&parent_handle];
-                if let Some(collider) =
-                    nphysics_collider_from_rapier_collider(&collider, parent.is_dynamic())
-                {
-                    let nphysics_collider = collider.build(BodyPartHandle(nphysics_rb_handle, 0));
-                    nphysics_colliders.insert(nphysics_collider);
-                } else {
-                    eprintln!("Creating shape unknown to the nphysics backend.")
-                }
+            let parent = &bodies[collider.parent()];
+            let nphysics_rb_handle = rapier2nphysics[&collider.parent()];
+            if let Some(collider) =
+                nphysics_collider_from_rapier_collider(&collider, parent.is_dynamic())
+            {
+                let nphysics_collider = collider.build(BodyPartHandle(nphysics_rb_handle, 0));
+                nphysics_colliders.insert(nphysics_collider);
+            } else {
+                eprintln!("Creating shape unknown to the nphysics backend.")
             }
         }
 
@@ -78,10 +76,10 @@ impl NPhysicsWorld {
                     let c = FixedConstraint::new(
                         b1,
                         b2,
-                        params.local_frame1.translation.vector.into(),
-                        params.local_frame1.rotation,
-                        params.local_frame2.translation.vector.into(),
-                        params.local_frame2.rotation,
+                        params.local_anchor1.translation.vector.into(),
+                        params.local_anchor1.rotation,
+                        params.local_anchor2.translation.vector.into(),
+                        params.local_anchor2.rotation,
                     );
                     nphysics_joints.insert(c);
                 }
@@ -174,9 +172,7 @@ impl NPhysicsWorld {
 
             for coll_handle in rb.colliders() {
                 let collider = &mut colliders[*coll_handle];
-                collider.set_position(
-                    pos * collider.position_wrt_parent().copied().unwrap_or(na::one()),
-                );
+                collider.set_position_debug(pos * collider.position_wrt_parent());
             }
         }
     }
@@ -187,7 +183,7 @@ fn nphysics_collider_from_rapier_collider(
     is_dynamic: bool,
 ) -> Option<ColliderDesc<f32>> {
     let mut margin = ColliderDesc::<f32>::default_margin();
-    let mut pos = collider.position_wrt_parent().copied().unwrap_or(na::one());
+    let mut pos = *collider.position_wrt_parent();
     let shape = collider.shape();
 
     let shape = if let Some(cuboid) = shape.as_cuboid() {
@@ -213,7 +209,7 @@ fn nphysics_collider_from_rapier_collider(
                 trimesh
                     .indices()
                     .iter()
-                    .map(|idx| na::point![idx[0] as usize, idx[1] as usize, idx[2] as usize])
+                    .map(|idx| na::Point3::new(idx[0] as usize, idx[1] as usize, idx[2] as usize))
                     .collect(),
                 None,
             ))

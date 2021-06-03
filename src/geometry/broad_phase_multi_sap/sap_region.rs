@@ -13,7 +13,8 @@ pub struct SAPRegion {
     pub axes: [SAPAxis; DIM],
     pub existing_proxies: BitVec,
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
-    pub to_insert: Vec<SAPProxyIndex>, // Workspace
+    // Workspace
+    pub to_insert: Vec<SAPProxyIndex>,
     pub subregions: Vec<SAPProxyIndex>,
     pub id_in_parent_subregion: u32,
     pub update_count: u8,
@@ -90,11 +91,7 @@ impl SAPRegion {
     ///
     /// Returns `true` if this region contained the proxy. Returns `false` otherwise.
     pub fn proper_proxy_moved_to_a_bigger_layer(&mut self, proxy_id: SAPProxyIndex) -> bool {
-        if self.existing_proxies.get(proxy_id as usize) == Some(true) {
-            // NOTE: we are just registering the fact that that proxy isn't a
-            //       subproper proxy anymore. But it is still part of this region
-            //       so we must not set `self.existing_proxies[proxy_id] = false`
-            //       nor delete its endpoints.
+        if self.existing_proxies[proxy_id as usize] {
             self.subproper_proxy_count -= 1;
             true
         } else {

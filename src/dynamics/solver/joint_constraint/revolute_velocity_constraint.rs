@@ -1,7 +1,6 @@
 use crate::dynamics::solver::{AnyJointVelocityConstraint, DeltaVel};
 use crate::dynamics::{
-    IntegrationParameters, JointGraphEdge, JointIndex, JointParams, RevoluteJoint, RigidBodyIds,
-    RigidBodyMassProps, RigidBodyPosition, RigidBodyVelocity,
+    IntegrationParameters, JointGraphEdge, JointIndex, JointParams, RevoluteJoint, RigidBody,
 };
 use crate::math::{AngularInertia, Real, Rotation, Vector};
 use crate::utils::{WAngularInertia, WCross, WCrossMatrix};
@@ -25,7 +24,8 @@ pub(crate) struct RevoluteVelocityConstraint {
     motor_rhs: Real,
     motor_impulse: Real,
     motor_max_impulse: Real,
-    motor_angle: Real, // Exists only to write it back into the joint.
+    // Exists only to write it back into the joint.
+    motor_angle: Real,
 
     motor_axis1: Vector<Real>,
     motor_axis2: Vector<Real>,
@@ -44,47 +44,34 @@ impl RevoluteVelocityConstraint {
     pub fn from_params(
         params: &IntegrationParameters,
         joint_id: JointIndex,
-        rb1: (
-            &RigidBodyPosition,
-            &RigidBodyVelocity,
-            &RigidBodyMassProps,
-            &RigidBodyIds,
-        ),
-        rb2: (
-            &RigidBodyPosition,
-            &RigidBodyVelocity,
-            &RigidBodyMassProps,
-            &RigidBodyIds,
-        ),
+        rb1: &RigidBody,
+        rb2: &RigidBody,
         joint: &RevoluteJoint,
     ) -> Self {
-        let (poss1, vels1, mprops1, ids1) = rb1;
-        let (poss2, vels2, mprops2, ids2) = rb2;
-
         // Linear part.
-        let anchor1 = poss1.position * joint.local_anchor1;
-        let anchor2 = poss2.position * joint.local_anchor2;
+        let anchor1 = rb1.position * joint.local_anchor1;
+        let anchor2 = rb2.position * joint.local_anchor2;
         let basis1 = Matrix3x2::from_columns(&[
-            poss1.position * joint.basis1[0],
-            poss1.position * joint.basis1[1],
+            rb1.position * joint.basis1[0],
+            rb1.position * joint.basis1[1],
         ]);
 
         let basis2 = Matrix3x2::from_columns(&[
-            poss2.position * joint.basis2[0],
-            poss2.position * joint.basis2[1],
+            rb2.position * joint.basis2[0],
+            rb2.position * joint.basis2[1],
         ]);
         let basis_projection2 = basis2 * basis2.transpose();
         let basis2 = basis_projection2 * basis1;
 
-        let im1 = mprops1.effective_inv_mass;
-        let im2 = mprops2.effective_inv_mass;
+        let im1 = rb1.effective_inv_mass;
+        let im2 = rb2.effective_inv_mass;
 
-        let ii1 = mprops1.effective_world_inv_inertia_sqrt.squared();
-        let r1 = anchor1 - mprops1.world_com;
+        let ii1 = rb1.effective_world_inv_inertia_sqrt.squared();
+        let r1 = anchor1 - rb1.world_com;
         let r1_mat = r1.gcross_matrix();
 
-        let ii2 = mprops2.effective_world_inv_inertia_sqrt.squared();
-        let r2 = anchor2 - mprops2.world_com;
+        let ii2 = rb2.effective_world_inv_inertia_sqrt.squared();
+        let r2 = anchor2 - rb2.world_com;
         let r2_mat = r2.gcross_matrix();
 
         let mut lhs = Matrix5::zeros();
@@ -104,8 +91,8 @@ impl RevoluteVelocityConstraint {
         let inv_lhs = Cholesky::new_unchecked(lhs).inverse();
 
         let linvel_err =
-            (vels2.linvel + vels2.angvel.gcross(r2)) - (vels1.linvel + vels1.angvel.gcross(r1));
-        let angvel_err = basis2.tr_mul(&vels2.angvel) - basis1.tr_mul(&vels1.angvel);
+            (rb2.linvel + rb2.angvel.gcross(r2)) - (rb1.linvel + rb1.angvel.gcross(r1));
+        let angvel_err = basis2.tr_mul(&rb2.angvel) - basis1.tr_mul(&rb1.angvel);
 
         let mut rhs = Vector5::new(
             linvel_err.x,
@@ -119,8 +106,8 @@ impl RevoluteVelocityConstraint {
         if velocity_based_erp_inv_dt != 0.0 {
             let lin_err = anchor2 - anchor1;
 
-            let axis1 = poss1.position * joint.local_axis1;
-            let axis2 = poss2.position * joint.local_axis2;
+            let axis1 = rb1.position * joint.local_axis1;
+            let axis2 = rb2.position * joint.local_axis2;
 
             let axis_error = axis1.cross(&axis2);
             let ang_err = (basis2.tr_mul(&axis_error) + basis1.tr_mul(&axis_error)) * 0.5;
@@ -132,8 +119,8 @@ impl RevoluteVelocityConstraint {
         /*
          * Motor.
          */
-        let motor_axis1 = poss1.position * *joint.local_axis1;
-        let motor_axis2 = poss2.position * *joint.local_axis2;
+        let motor_axis1 = rb1.position * *joint.local_axis1;
+        let motor_axis2 = rb2.position * *joint.local_axis2;
         let mut motor_rhs = 0.0;
         let mut motor_inv_lhs = 0.0;
         let mut motor_angle = 0.0;
@@ -146,12 +133,12 @@ impl RevoluteVelocityConstraint {
         );
 
         if stiffness != 0.0 {
-            motor_angle = joint.estimate_motor_angle(&poss1.position, &poss2.position);
+            motor_angle = joint.estimate_motor_angle(&rb1.position, &rb2.position);
             motor_rhs += (motor_angle - joint.motor_target_pos) * stiffness;
         }
 
         if damping != 0.0 {
-            let curr_vel = vels2.angvel.dot(&motor_axis2) - vels1.angvel.dot(&motor_axis1);
+            let curr_vel = rb2.angvel.dot(&motor_axis2) - rb1.angvel.dot(&motor_axis1);
             motor_rhs += (curr_vel - joint.motor_target_vel) * damping;
         }
 
@@ -185,14 +172,14 @@ impl RevoluteVelocityConstraint {
 
         RevoluteVelocityConstraint {
             joint_id,
-            mj_lambda1: ids1.active_set_offset,
-            mj_lambda2: ids2.active_set_offset,
+            mj_lambda1: rb1.active_set_offset,
+            mj_lambda2: rb2.active_set_offset,
             im1,
-            ii1_sqrt: mprops1.effective_world_inv_inertia_sqrt,
+            ii1_sqrt: rb1.effective_world_inv_inertia_sqrt,
             basis1,
             basis2,
             im2,
-            ii2_sqrt: mprops2.effective_world_inv_inertia_sqrt,
+            ii2_sqrt: rb2.effective_world_inv_inertia_sqrt,
             impulse,
             inv_lhs,
             rhs,
@@ -331,7 +318,8 @@ pub(crate) struct RevoluteVelocityGroundConstraint {
     motor_rhs: Real,
     motor_impulse: Real,
     motor_max_impulse: Real,
-    motor_angle: Real, // Exists just for writing it into the joint.
+    // Exists just for writing it into the joint.
+    motor_angle: Real,
 
     basis2: Matrix3x2<Real>,
 
@@ -344,19 +332,11 @@ impl RevoluteVelocityGroundConstraint {
     pub fn from_params(
         params: &IntegrationParameters,
         joint_id: JointIndex,
-        rb1: (&RigidBodyPosition, &RigidBodyVelocity, &RigidBodyMassProps),
-        rb2: (
-            &RigidBodyPosition,
-            &RigidBodyVelocity,
-            &RigidBodyMassProps,
-            &RigidBodyIds,
-        ),
+        rb1: &RigidBody,
+        rb2: &RigidBody,
         joint: &RevoluteJoint,
         flipped: bool,
     ) -> AnyJointVelocityConstraint {
-        let (poss1, vels1, mprops1) = rb1;
-        let (poss2, vels2, mprops2, ids2) = rb2;
-
         let anchor2;
         let anchor1;
         let axis1;
@@ -365,39 +345,39 @@ impl RevoluteVelocityGroundConstraint {
         let basis2;
 
         if flipped {
-            axis1 = poss1.position * *joint.local_axis2;
-            axis2 = poss2.position * *joint.local_axis1;
-            anchor1 = poss1.position * joint.local_anchor2;
-            anchor2 = poss2.position * joint.local_anchor1;
+            axis1 = rb1.position * *joint.local_axis2;
+            axis2 = rb2.position * *joint.local_axis1;
+            anchor1 = rb1.position * joint.local_anchor2;
+            anchor2 = rb2.position * joint.local_anchor1;
             basis1 = Matrix3x2::from_columns(&[
-                poss1.position * joint.basis2[0],
-                poss1.position * joint.basis2[1],
+                rb1.position * joint.basis2[0],
+                rb1.position * joint.basis2[1],
             ]);
             basis2 = Matrix3x2::from_columns(&[
-                poss2.position * joint.basis1[0],
-                poss2.position * joint.basis1[1],
+                rb2.position * joint.basis1[0],
+                rb2.position * joint.basis1[1],
             ]);
         } else {
-            axis1 = poss1.position * *joint.local_axis1;
-            axis2 = poss2.position * *joint.local_axis2;
-            anchor1 = poss1.position * joint.local_anchor1;
-            anchor2 = poss2.position * joint.local_anchor2;
+            axis1 = rb1.position * *joint.local_axis1;
+            axis2 = rb2.position * *joint.local_axis2;
+            anchor1 = rb1.position * joint.local_anchor1;
+            anchor2 = rb2.position * joint.local_anchor2;
             basis1 = Matrix3x2::from_columns(&[
-                poss1.position * joint.basis1[0],
-                poss1.position * joint.basis1[1],
+                rb1.position * joint.basis1[0],
+                rb1.position * joint.basis1[1],
             ]);
             basis2 = Matrix3x2::from_columns(&[
-                poss2.position * joint.basis2[0],
-                poss2.position * joint.basis2[1],
+                rb2.position * joint.basis2[0],
+                rb2.position * joint.basis2[1],
             ]);
         };
 
         let basis_projection2 = basis2 * basis2.transpose();
         let basis2 = basis_projection2 * basis1;
-        let im2 = mprops2.effective_inv_mass;
-        let ii2 = mprops2.effective_world_inv_inertia_sqrt.squared();
-        let r1 = anchor1 - mprops1.world_com;
-        let r2 = anchor2 - mprops2.world_com;
+        let im2 = rb2.effective_inv_mass;
+        let ii2 = rb2.effective_world_inv_inertia_sqrt.squared();
+        let r1 = anchor1 - rb1.world_com;
+        let r2 = anchor2 - rb2.world_com;
         let r2_mat = r2.gcross_matrix();
 
         let mut lhs = Matrix5::zeros();
@@ -415,8 +395,8 @@ impl RevoluteVelocityGroundConstraint {
         let inv_lhs = Cholesky::new_unchecked(lhs).inverse();
 
         let linvel_err =
-            (vels2.linvel + vels2.angvel.gcross(r2)) - (vels1.linvel + vels1.angvel.gcross(r1));
-        let angvel_err = basis2.tr_mul(&vels2.angvel) - basis1.tr_mul(&vels1.angvel);
+            (rb2.linvel + rb2.angvel.gcross(r2)) - (rb1.linvel + rb1.angvel.gcross(r1));
+        let angvel_err = basis2.tr_mul(&rb2.angvel) - basis1.tr_mul(&rb1.angvel);
         let mut rhs = Vector5::new(
             linvel_err.x,
             linvel_err.y,
@@ -431,11 +411,11 @@ impl RevoluteVelocityGroundConstraint {
 
             let (axis1, axis2);
             if flipped {
-                axis1 = poss1.position * joint.local_axis2;
-                axis2 = poss2.position * joint.local_axis1;
+                axis1 = rb1.position * joint.local_axis2;
+                axis2 = rb2.position * joint.local_axis1;
             } else {
-                axis1 = poss1.position * joint.local_axis1;
-                axis2 = poss2.position * joint.local_axis2;
+                axis1 = rb1.position * joint.local_axis1;
+                axis2 = rb2.position * joint.local_axis2;
             }
             let axis_error = axis1.cross(&axis2);
             let ang_err = basis2.tr_mul(&axis_error);
@@ -459,12 +439,12 @@ impl RevoluteVelocityGroundConstraint {
         );
 
         if stiffness != 0.0 {
-            motor_angle = joint.estimate_motor_angle(&poss1.position, &poss2.position);
+            motor_angle = joint.estimate_motor_angle(&rb1.position, &rb2.position);
             motor_rhs += (motor_angle - joint.motor_target_pos) * stiffness;
         }
 
         if damping != 0.0 {
-            let curr_vel = vels2.angvel.dot(&axis2) - vels1.angvel.dot(&axis1);
+            let curr_vel = rb2.angvel.dot(&axis2) - rb1.angvel.dot(&axis1);
             motor_rhs += (curr_vel - joint.motor_target_vel) * damping;
         }
 
@@ -482,9 +462,9 @@ impl RevoluteVelocityGroundConstraint {
 
         let result = RevoluteVelocityGroundConstraint {
             joint_id,
-            mj_lambda2: ids2.active_set_offset,
+            mj_lambda2: rb2.active_set_offset,
             im2,
-            ii2_sqrt: mprops2.effective_world_inv_inertia_sqrt,
+            ii2_sqrt: rb2.effective_world_inv_inertia_sqrt,
             impulse: joint.impulse * params.warmstart_coeff,
             basis2,
             inv_lhs,

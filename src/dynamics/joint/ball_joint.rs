@@ -5,9 +5,9 @@ use crate::math::{Point, Real, Rotation, Vector};
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 /// A joint that removes all relative linear motion between a pair of points on two bodies.
 pub struct BallJoint {
-    /// Where the ball joint is attached on the first body, expressed in the first body local frame.
+    /// Where the ball joint is attached on the first body, expressed in the first body's local frame.
     pub local_anchor1: Point<Real>,
-    /// Where the ball joint is attached on the first body, expressed in the first body local frame.
+    /// Where the ball joint is attached on the second body, expressed in the second body's local frame.
     pub local_anchor2: Point<Real>,
     /// The impulse applied by this joint on the first body.
     ///
@@ -23,10 +23,10 @@ pub struct BallJoint {
     /// The target angular position of this joint, expressed as an axis-angle.
     pub motor_target_pos: Rotation<Real>,
     /// The motor's stiffness.
-    /// See the documentation of `SpringModel` for more information on this parameter.
+    /// See the documentation of [`super::SpringModel`] for more information on this parameter.
     pub motor_stiffness: Real,
     /// The motor's damping.
-    /// See the documentation of `SpringModel` for more information on this parameter.
+    /// See the documentation of [`super::SpringModel`] for more information on this parameter.
     pub motor_damping: Real,
     /// The maximal impulse the motor is able to deliver.
     pub motor_max_impulse: Real,
@@ -36,12 +36,12 @@ pub struct BallJoint {
     /// The angular impulse applied by the motor.
     #[cfg(feature = "dim3")]
     pub motor_impulse: Vector<Real>,
-    /// The spring-like model used by the motor to reach the target velocity and .
+    /// The spring-like model used by the motor to reach the target velocity and position.
     pub motor_model: SpringModel,
 }
 
 impl BallJoint {
-    /// Creates a new Ball joint from two anchors given on the local spaces of the respective bodies.
+    /// Creates a new [`BallJoint`] from two anchors given in the local spaces of the respective bodies.
     pub fn new(local_anchor1: Point<Real>, local_anchor2: Point<Real>) -> Self {
         Self::with_impulse(local_anchor1, local_anchor2, Vector::zeros())
     }
@@ -65,7 +65,7 @@ impl BallJoint {
         }
     }
 
-    /// Can a SIMD constraint be used for resolving this joint?
+    /// Returns `true` if SIMD constraints can be used for resolving this joint.
     pub fn supports_simd_constraints(&self) -> bool {
         // SIMD ball constraints don't support motors right now.
         self.motor_max_impulse == 0.0 || (self.motor_stiffness == 0.0 && self.motor_damping == 0.0)

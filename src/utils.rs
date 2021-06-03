@@ -670,55 +670,6 @@ impl Drop for FlushToZeroDenormalsAreZeroFlags {
     }
 }
 
-/// This is an RAII structure that disables floating point exceptions while
-/// it is alive, so that operations which generate NaNs and infinite values
-/// intentionally will not trip an exception when debugging problematic
-/// code that is generating NaNs and infinite values erroneously.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DisableFloatingPointExceptionsFlags {
-    #[cfg(feature = "debug-disable-legitimate-fe-exceptions")]
-    // We can't get a precise size for this, because it's of type
-    // `fenv_t`, which is a definition that doesn't exist in rust
-    // (not even in the libc crate, as of the time of writing.)
-    // But since the state is intended to be stored on the stack,
-    // 256 bytes should be more than enough.
-    original_flags: [u8; 256],
-}
-
-#[cfg(feature = "debug-disable-legitimate-fe-exceptions")]
-extern "C" {
-    fn feholdexcept(env: *mut std::ffi::c_void);
-    fn fesetenv(env: *const std::ffi::c_void);
-}
-
-impl DisableFloatingPointExceptionsFlags {
-    #[cfg(not(feature = "debug-disable-legitimate-fe-exceptions"))]
-    #[allow(dead_code)]
-    /// Disables floating point exceptions as long as this object is not dropped.
-    pub fn disable_floating_point_exceptions() -> Self {
-        Self {}
-    }
-
-    #[cfg(feature = "debug-disable-legitimate-fe-exceptions")]
-    /// Disables floating point exceptions as long as this object is not dropped.
-    pub fn disable_floating_point_exceptions() -> Self {
-        unsafe {
-            let mut original_flags = [0; 256];
-            feholdexcept(original_flags.as_mut_ptr() as *mut _);
-            Self { original_flags }
-        }
-    }
-}
-
-#[cfg(feature = "debug-disable-legitimate-fe-exceptions")]
-impl Drop for DisableFloatingPointExceptionsFlags {
-    fn drop(&mut self) {
-        unsafe {
-            fesetenv(self.original_flags.as_ptr() as *const _);
-        }
-    }
-}
-
 pub(crate) fn select_other<T: PartialEq>(pair: (T, T), elt: T) -> T {
     if pair.0 == elt {
         pair.1
@@ -747,7 +698,7 @@ pub trait IndexMut2<I>: IndexMut<I> {
 impl<T> IndexMut2<usize> for Vec<T> {
     #[inline]
     fn index_mut2(&mut self, i: usize, j: usize) -> (&mut T, &mut T) {
-        assert!(i != j, "Unable to index the same element twice.");
+        assert_ne!(i, j, "Unable to index the same element twice.");
         assert!(i < self.len() && j < self.len(), "Index out of bounds.");
 
         unsafe {

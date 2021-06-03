@@ -10,7 +10,7 @@ pub struct IntegrationParameters {
     ///
     /// When CCD with multiple substeps is enabled, the timestep is subdivided
     /// into smaller pieces. This timestep subdivision won't generate timestep
-    /// lengths smaller than `min_ccd_dt`.
+    /// lengths smaller than `min_dt`.
     ///
     /// Setting this to a large value will reduce the opportunity to performing
     /// CCD substepping, resulting in potentially more time dropped by the
@@ -18,33 +18,45 @@ pub struct IntegrationParameters {
     /// to numerical instabilities.
     pub min_ccd_dt: Real,
 
-    /// The Error Reduction Parameter in `[0, 1]` is the proportion of
+    //    /// If `true` and if rapier is compiled with the `parallel` feature, this will enable rayon-based multithreading (default: `true`).
+    //    ///
+    //    /// This parameter is ignored if rapier is not compiled with is `parallel` feature.
+    //    /// Refer to rayon's documentation regarding how to configure the number of threads with either
+    //    /// `rayon::ThreadPoolBuilder::new().num_threads(4).build_global().unwrap()` or `ThreadPool::install`.
+    //    /// Note that using only one thread with `multithreading_enabled` set to `true` will result on a slower
+    //    /// simulation than setting `multithreading_enabled` to `false`.
+    //    pub multithreading_enabled: bool,
+    // /// If `true`, the world's `step` method will stop right after resolving exactly one CCD event (default: `false`).
+    // /// This allows the user to take action during a timestep, in-between two CCD events.
+    // pub return_after_ccd_substep: bool,
+    /// The Error Reduction Parameter lies in the range `0.0..=1.0`. It is the proportion of
     /// the positional error to be corrected at each time step (default: `0.2`).
     pub erp: Real,
-    /// The Error Reduction Parameter for joints in `[0, 1]` is the proportion of
+    /// The Error Reduction Parameter for joints in the range `0.0..=1.0` is the proportion of
     /// the positional error to be corrected at each time step (default: `0.2`).
     pub joint_erp: Real,
-    /// Each cached impulse are multiplied by this coefficient in `[0, 1]`
+    /// Each cached impulse is multiplied by this coefficient in range `0.0..=1.0`
     /// when they are re-used to initialize the solver (default `1.0`).
     pub warmstart_coeff: Real,
     /// Correction factor to avoid large warmstart impulse after a strong impact (default `10.0`).
     pub warmstart_correction_slope: Real,
 
-    /// 0-1: how much of the velocity to dampen out in the constraint solver?
+    /// Range `0.0..=1.0`: How much of the velocity to dampen out in the constraint solver?
     /// (default `1.0`).
     pub velocity_solve_fraction: Real,
 
-    /// 0-1: multiplier for how much of the constraint violation (e.g. contact penetration)
+    /// Range `0.0..=1.0`: Multiplier for how much of the constraint violation (e.g. contact penetration)
     /// will be compensated for during the velocity solve.
-    /// If zero, you need to enable the positional solver.
-    /// If non-zero, you do not need the positional solver.
-    /// A good non-zero value is around `0.2`.
-    /// (default `0.0`).
+    ///
+    /// * If zero, you need to enable the positional solver.
+    /// * If non-zero, you do not need the positional solver.
+    ///
+    /// A good non-zero value is around `0.2` (default `0.0`).
     pub velocity_based_erp: Real,
 
-    /// Amount of penetration the engine wont attempt to correct (default: `0.005m`).
+    /// Amount of penetration the engine wont attempt to correct (default: `0.005` (meters)).
     pub allowed_linear_error: Real,
-    /// The maximal distance separating two objects that will generate predictive contacts (default: `0.002`).
+    /// The maximal distance separating two objects that will generate predictive contacts (default: `0.002` (meters)).
     pub prediction_distance: Real,
     /// Amount of angular drift of joint limits the engine wont
     /// attempt to correct (default: `0.001rad`).
@@ -59,7 +71,7 @@ pub struct IntegrationParameters {
     pub max_position_iterations: usize,
     /// Minimum number of dynamic bodies in each active island (default: `128`).
     pub min_island_size: usize,
-    /// Maximum number of substeps performed by the  solver (default: `1`).
+    /// Maximum number of substeps performed by the solver (default: `1`).
     pub max_ccd_substeps: usize,
 }
 

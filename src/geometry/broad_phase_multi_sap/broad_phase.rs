@@ -1,25 +1,22 @@
 use super::{
     BroadPhasePairEvent, ColliderPair, SAPLayer, SAPProxies, SAPProxy, SAPProxyData, SAPRegionPool,
 };
+use crate::data::pubsub::Subscription;
 use crate::geometry::broad_phase_multi_sap::SAPProxyIndex;
-use crate::geometry::{
-    ColliderBroadPhaseData, ColliderChanges, ColliderHandle, ColliderPosition, ColliderShape,
-};
+use crate::geometry::collider::ColliderChanges;
+use crate::geometry::{ColliderSet, RemovedCollider};
 use crate::math::Real;
 use crate::utils::IndexMut2;
 use parry::bounding_volume::BoundingVolume;
 use parry::utils::hashmap::HashMap;
 
-use crate::data::{BundleSet, ComponentSet, ComponentSetMut};
-
 /// A broad-phase combining a Hierarchical Grid and Sweep-and-Prune.
 ///
-/// The basic Sweep-and-Prune (SAP) algorithm has one significant flaws:
-/// the interactions between far-away objects. This means that objects
+/// The basic Sweep-and-Prune (SAP) algorithm has one significant flaw:
+/// The interactions between far-away objects. This means that objects
 /// that are very far away will still have some of their endpoints swapped
-/// within the SAP data-structure. This results in poor scaling because this
-/// results in lots of swapping between endpoints of AABBs that won't ever
-/// actually interact.
+/// within the SAP data-structure, resulting in poor scaling due to
+/// lots of swapping between endpoints of AABBs that won't ever actually interact.
 ///
 /// The first optimization to address this problem is to use the Multi-SAP
 /// method. This basically combines an SAP with a grid. The grid subdivides
@@ -28,9 +25,9 @@ use crate::data::{BundleSet, ComponentSet, ComponentSetMut};
 /// collecting endpoints and swapping them when they move to detect interaction pairs).
 /// Each AABB is inserted in all the regions it intersects.
 /// This prevents the far-away problem because two objects that are far away will
-/// be located on different regions. So their endpoints will never meed.
+/// be located on different regions. So their endpoints will never meet.
 ///
-/// However, the Multi-SAP approach has one notable problem: the region size must
+/// However, the Multi-SAP approach has one notable problem: The region size must
 /// be chosen wisely. It could be user-defined, but that's makes it more difficult
 /// to use (for the end-user). Or it can be given a fixed value. Using a fixed
 /// value may result in large objects intersecting lots of regions, resulting in
@@ -39,13 +36,13 @@ use crate::data::{BundleSet, ComponentSet, ComponentSetMut};
 /// So a solution to that large-objects problem is the Multi-SAP approach is to
 /// replace the grid by a hierarchical grid. A hierarchical grid is composed of
 /// several layers. And each layer have different region sizes. For example all
-/// the regions on layer 0 will have the size 1x1x1. All the regions on the layer
-/// 1 will have the size 10x10x10, etc. That way, a given AABB will be inserted
+/// the regions on layer 0 will have the size 1x1x1, whereas all the regions on the first
+/// layer will have the size 10x10x10, etc. That way, a given AABB will be inserted
 /// on the layer that has regions big enough to avoid the large-object problem.
 /// For example a 20x20x20 object will be inserted in the layer with region
 /// of size 10x10x10, resulting in only 8 regions being intersect by the AABB.
 /// (If it was inserted in the layer with regions of size 1x1x1, it would have intersected
-/// 8000 regions, which is a problem performancewise.)
+/// 8000 regions, which is a problem performance-wise.)
 ///
 /// We call this new method the Hierarchical-SAP.
 ///
@@ -80,21 +77,11 @@ pub struct BroadPhase {
     layers: Vec<SAPLayer>,
     smallest_layer: u8,
     largest_layer: u8,
+    removed_colliders: Option<Subscription<RemovedCollider>>,
     deleted_any: bool,
-    // NOTE: we maintain this hashmap to simplify collider removal.
-    //       This information is also present in the ColliderProxyId
-    //       component. However if that component is removed, we need
-    //       a way to access it to do some cleanup.
-    //       Note that we could just remove the ColliderProxyId component
-    //       altogether but that would be slow because of the need to
-    //       always access this hashmap. Instead, we access this hashmap
-    //       only when the collider has been added/removed.
-    //       Another alternative would be to remove ColliderProxyId and
-    //       just use a Coarena. But this seems like it could use too
-    //       much memory.
-    colliders_proxy_ids: HashMap<ColliderHandle, SAPProxyIndex>,
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
-    region_pool: SAPRegionPool, // To avoid repeated allocations.
+    // To avoid repeated allocations.
+    region_pool: SAPRegionPool,
     // We could think serializing this workspace is useless.
     // It turns out is is important to serialize at least its capacity
     // and restore this capacity when deserializing the hashmap.
@@ -113,20 +100,21 @@ pub struct BroadPhase {
             deserialize_with = "parry::utils::hashmap::deserialize_hashmap_capacity"
         )
     )]
-    reporting: HashMap<(u32, u32), bool>, // Workspace
+    // Workspace
+    reporting: HashMap<(u32, u32), bool>,
 }
 
 impl BroadPhase {
     /// Create a new empty broad-phase.
     pub fn new() -> Self {
         BroadPhase {
+            removed_colliders: None,
             proxies: SAPProxies::new(),
             layers: Vec::new(),
             smallest_layer: 0,
             largest_layer: 0,
             region_pool: Vec::new(),
             reporting: HashMap::default(),
-            colliders_proxy_ids: HashMap::default(),
             deleted_any: false,
         }
     }
@@ -136,19 +124,32 @@ impl BroadPhase {
     /// For each colliders marked as removed, we make their containing layer mark
     /// its proxy as pre-deleted. The actual proxy removal will happen at the end
     /// of the `BroadPhase::update`.
-    fn handle_removed_colliders(&mut self, removed_colliders: &[ColliderHandle]) {
-        // For each removed collider, remove the corresponding proxy.
-        for removed in removed_colliders {
-            if let Some(proxy_id) = self.colliders_proxy_ids.get(removed).copied() {
-                self.predelete_proxy(proxy_id);
-            }
+    fn handle_removed_colliders(&mut self, colliders: &mut ColliderSet) {
+        // Ensure we already subscribed the collider-removed events.
+        if self.removed_colliders.is_none() {
+            self.removed_colliders = Some(colliders.removed_colliders.subscribe());
         }
+
+        // Extract the cursor to avoid borrowing issues.
+        let cursor = self.removed_colliders.take().unwrap();
+
+        // Read all the collider-removed events, and remove the corresponding proxy.
+        for collider in colliders.removed_colliders.read(&cursor) {
+            self.predelete_proxy(collider.proxy_index);
+        }
+
+        // NOTE: We don't acknowledge the cursor just yet because we need
+        // to traverse the set of removed colliders one more time after
+        // the broad-phase update.
+
+        // Re-insert the cursor we extracted to avoid borrowing issues.
+        self.removed_colliders = Some(cursor);
     }
 
     /// Pre-deletes a proxy from this broad-phase.
     ///
     /// The removal of a proxy is a semi-lazy process. It will mark
-    /// the proxy as predeleted, and will set its AABB as +infinity.
+    /// the proxy as pre-deleted, and will set its AABB as +infinity.
     /// After this method has been called with all the proxies to
     /// remove, the `complete_removal` method MUST be called to
     /// complete the removal of these proxies, by actually removing them
@@ -173,7 +174,7 @@ impl BroadPhase {
     /// This method will actually remove from the proxy list all the proxies
     /// marked as deletable by `self.predelete_proxy`, making their proxy
     /// handles re-usable by new proxies.
-    fn complete_removals(&mut self, removed_colliders: &[ColliderHandle]) {
+    fn complete_removals(&mut self, colliders: &mut ColliderSet) {
         // If there is no layer, there is nothing to remove.
         if self.layers.is_empty() {
             return;
@@ -213,15 +214,15 @@ impl BroadPhase {
         }
 
         /*
-         * Actually remove the colliders proxies.
+         * Actually remove the colliders' proxies.
          */
-        for removed in removed_colliders {
-            if let Some(proxy_id) = self.colliders_proxy_ids.remove(removed) {
-                if proxy_id != crate::INVALID_U32 {
-                    self.proxies.remove(proxy_id);
-                }
+        let cursor = self.removed_colliders.as_ref().unwrap();
+        for collider in colliders.removed_colliders.read(&cursor) {
+            if collider.proxy_index != crate::INVALID_U32 {
+                self.proxies.remove(collider.proxy_index);
             }
         }
+        colliders.removed_colliders.ack(&cursor);
     }
 
     /// Finalize the insertion of the layer identified by `layer_id`.
@@ -336,128 +337,67 @@ impl BroadPhase {
         }
     }
 
-    fn handle_modified_collider(
-        &mut self,
-        prediction_distance: Real,
-        handle: ColliderHandle,
-        proxy_index: &mut u32,
-        collider: (&ColliderPosition, &ColliderShape, &ColliderChanges),
-    ) -> bool {
-        let (co_pos, co_shape, co_changes) = collider;
-
-        let mut aabb = co_shape
-            .compute_aabb(co_pos)
-            .loosened(prediction_distance / 2.0);
-
-        aabb.mins = super::clamp_point(aabb.mins);
-        aabb.maxs = super::clamp_point(aabb.maxs);
-
-        let layer_id = if let Some(proxy) = self.proxies.get_mut(*proxy_index) {
-            let mut layer_id = proxy.layer_id;
-            proxy.aabb = aabb;
-
-            if co_changes.contains(ColliderChanges::SHAPE) {
-                // If the shape was changed, then we need to see if this proxy should be
-                // migrated to a larger layer. Indeed, if the shape was replaced by
-                // a much larger shape, we need to promote the proxy to a bigger layer
-                // to avoid the O(n²) discretization problem.
-                let new_layer_depth = super::layer_containing_aabb(&aabb);
-                if new_layer_depth > proxy.layer_depth {
-                    self.layers[proxy.layer_id as usize]
-                        .proper_proxy_moved_to_bigger_layer(&mut self.proxies, *proxy_index);
-
-                    // We need to promote the proxy to the bigger layer.
-                    layer_id = self.ensure_layer_exists(new_layer_depth);
-                    self.proxies[*proxy_index].layer_id = layer_id;
-                    self.proxies[*proxy_index].layer_depth = new_layer_depth;
-                }
-            }
-
-            layer_id
-        } else {
-            let layer_depth = super::layer_containing_aabb(&aabb);
-            let layer_id = self.ensure_layer_exists(layer_depth);
-
-            // Create the proxy.
-            let proxy = SAPProxy::collider(handle, aabb, layer_id, layer_depth);
-            *proxy_index = self.proxies.insert(proxy);
-            layer_id
-        };
-
-        let layer = &mut self.layers[layer_id as usize];
-
-        // Preupdate the collider in the layer.
-        layer.preupdate_collider(
-            *proxy_index,
-            &aabb,
-            &mut self.proxies,
-            &mut self.region_pool,
-        );
-        let need_region_propagation = !layer.created_regions.is_empty();
-
-        need_region_propagation
-    }
-
     /// Updates the broad-phase, taking into account the new collider positions.
-    pub fn update<Colliders>(
+    pub fn update(
         &mut self,
         prediction_distance: Real,
-        colliders: &mut Colliders,
-        modified_colliders: &[ColliderHandle],
-        removed_colliders: &[ColliderHandle],
+        colliders: &mut ColliderSet,
         events: &mut Vec<BroadPhasePairEvent>,
-    ) where
-        Colliders: ComponentSetMut<ColliderBroadPhaseData>
-            + ComponentSet<ColliderChanges>
-            + ComponentSet<ColliderPosition>
-            + ComponentSet<ColliderShape>,
-    {
+    ) {
         // Phase 1: pre-delete the collisions that have been deleted.
-        self.handle_removed_colliders(removed_colliders);
+        self.handle_removed_colliders(colliders);
 
         let mut need_region_propagation = false;
 
         // Phase 2: pre-delete the collisions that have been deleted.
-        for handle in modified_colliders {
-            // NOTE: we use `get` because the collider may no longer
-            //       exist if it has been removed.
-            let co_changes: Option<&ColliderChanges> = colliders.get(handle.0);
-
-            if let Some(co_changes) = co_changes {
-                let (co_bf_data, co_pos, co_shape): (
-                    &ColliderBroadPhaseData,
-                    &ColliderPosition,
-                    &ColliderShape,
-                ) = colliders.index_bundle(handle.0);
-
-                if !co_changes.needs_broad_phase_update() {
-                    return;
-                }
-                let mut new_proxy_id = co_bf_data.proxy_index;
-
-                if self.handle_modified_collider(
-                    prediction_distance,
-                    *handle,
-                    &mut new_proxy_id,
-                    (co_pos, co_shape, co_changes),
-                ) {
-                    need_region_propagation = true;
-                }
-
-                if co_bf_data.proxy_index != new_proxy_id {
-                    self.colliders_proxy_ids.insert(*handle, new_proxy_id);
-
-                    // Make sure we have the new proxy index in case
-                    // the collider was added for the first time.
-                    colliders.set_internal(
-                        handle.0,
-                        ColliderBroadPhaseData {
-                            proxy_index: new_proxy_id,
-                        },
-                    );
-                }
+        colliders.foreach_modified_colliders_mut_internal(|handle, collider| {
+            if !collider.changes.needs_broad_phase_update() {
+                return;
             }
-        }
+
+            let mut aabb = collider.compute_aabb().loosened(prediction_distance / 2.0);
+            aabb.mins = super::clamp_point(aabb.mins);
+            aabb.maxs = super::clamp_point(aabb.maxs);
+
+            let layer_id = if let Some(proxy) = self.proxies.get_mut(collider.proxy_index) {
+                let mut layer_id = proxy.layer_id;
+                proxy.aabb = aabb;
+
+                if collider.changes.contains(ColliderChanges::SHAPE) {
+                    // If the shape was changed, then we need to see if this proxy should be
+                    // migrated to a larger layer. Indeed, if the shape was replaced by
+                    // a much larger shape, we need to promote the proxy to a bigger layer
+                    // to avoid the O(n²) discretization problem.
+                    let new_layer_depth = super::layer_containing_aabb(&aabb);
+                    if new_layer_depth > proxy.layer_depth {
+                        self.layers[proxy.layer_id as usize].proper_proxy_moved_to_bigger_layer(
+                            &mut self.proxies,
+                            collider.proxy_index,
+                        );
+
+                        // We need to promote the proxy to the bigger layer.
+                        layer_id = self.ensure_layer_exists(new_layer_depth);
+                        self.proxies[collider.proxy_index].layer_id = layer_id;
+                    }
+                }
+
+                layer_id
+            } else {
+                let layer_depth = super::layer_containing_aabb(&aabb);
+                let layer_id = self.ensure_layer_exists(layer_depth);
+
+                // Create the proxy.
+                let proxy = SAPProxy::collider(handle, aabb, layer_id, layer_depth);
+                collider.proxy_index = self.proxies.insert(proxy);
+                layer_id
+            };
+
+            let layer = &mut self.layers[layer_id as usize];
+
+            // Preupdate the collider in the layer.
+            layer.preupdate_collider(collider, &aabb, &mut self.proxies, &mut self.region_pool);
+            need_region_propagation = need_region_propagation || !layer.created_regions.is_empty();
+        });
 
         // Phase 3: bottom-up pass to propagate new regions from smaller layers to larger layers.
         if need_region_propagation {
@@ -469,7 +409,7 @@ impl BroadPhase {
 
         // Phase 5: bottom-up pass to remove proxies, and propagate region removed from smaller
         // layers to possible remove regions from larger layers that would become empty that way.
-        self.complete_removals(removed_colliders);
+        self.complete_removals(colliders);
     }
 
     /// Propagate regions from the smallest layers up to the larger layers.
@@ -584,7 +524,7 @@ impl BroadPhase {
 
 #[cfg(test)]
 mod test {
-    use crate::dynamics::{IslandManager, JointSet, RigidBodyBuilder, RigidBodySet};
+    use crate::dynamics::{JointSet, RigidBodyBuilder, RigidBodySet};
     use crate::geometry::{BroadPhase, ColliderBuilder, ColliderSet};
 
     #[test]
@@ -593,26 +533,25 @@ mod test {
         let mut bodies = RigidBodySet::new();
         let mut colliders = ColliderSet::new();
         let mut joints = JointSet::new();
-        let mut islands = IslandManager::new();
 
         let rb = RigidBodyBuilder::new_dynamic().build();
         let co = ColliderBuilder::ball(0.5).build();
         let hrb = bodies.insert(rb);
-        let coh = colliders.insert_with_parent(co, hrb, &mut bodies);
+        colliders.insert(co, hrb, &mut bodies);
 
         let mut events = Vec::new();
-        broad_phase.update(0.0, &mut colliders, &[coh], &[], &mut events);
+        broad_phase.update(0.0, &mut colliders, &mut events);
 
-        bodies.remove(hrb, &mut islands, &mut colliders, &mut joints);
-        broad_phase.update(0.0, &mut colliders, &[], &[coh], &mut events);
+        bodies.remove(hrb, &mut colliders, &mut joints);
+        broad_phase.update(0.0, &mut colliders, &mut events);
 
         // Create another body.
         let rb = RigidBodyBuilder::new_dynamic().build();
         let co = ColliderBuilder::ball(0.5).build();
         let hrb = bodies.insert(rb);
-        let coh = colliders.insert_with_parent(co, hrb, &mut bodies);
+        colliders.insert(co, hrb, &mut bodies);
 
         // Make sure the proxy handles is recycled properly.
-        broad_phase.update(0.0, &mut colliders, &[coh], &[], &mut events);
+        broad_phase.update(0.0, &mut colliders, &mut events);
     }
 }

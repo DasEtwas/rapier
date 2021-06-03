@@ -1,10 +1,8 @@
 use super::{FixedPositionConstraint, FixedPositionGroundConstraint};
-use crate::dynamics::{
-    FixedJoint, IntegrationParameters, RigidBodyIds, RigidBodyMassProps, RigidBodyPosition,
-};
+use crate::dynamics::{FixedJoint, IntegrationParameters, RigidBody};
 use crate::math::{Isometry, Real, SIMD_WIDTH};
 
-// TODO: this does not uses SIMD optimizations yet.
+// TODO: Use SIMD optimizations.
 #[derive(Debug)]
 pub(crate) struct WFixedPositionConstraint {
     constraints: [FixedPositionConstraint; SIMD_WIDTH],
@@ -12,22 +10,12 @@ pub(crate) struct WFixedPositionConstraint {
 
 impl WFixedPositionConstraint {
     pub fn from_params(
-        rbs1: (
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
-        rbs2: (
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
+        rbs1: [&RigidBody; SIMD_WIDTH],
+        rbs2: [&RigidBody; SIMD_WIDTH],
         cparams: [&FixedJoint; SIMD_WIDTH],
     ) -> Self {
         Self {
-            constraints: gather![|ii| FixedPositionConstraint::from_params(
-                (rbs1.0[ii], rbs1.1[ii]),
-                (rbs2.0[ii], rbs2.1[ii]),
-                cparams[ii]
-            )],
+            constraints: array![|ii| FixedPositionConstraint::from_params(rbs1[ii], rbs2[ii], cparams[ii]); SIMD_WIDTH],
         }
     }
 
@@ -45,21 +33,13 @@ pub(crate) struct WFixedPositionGroundConstraint {
 
 impl WFixedPositionGroundConstraint {
     pub fn from_params(
-        rbs1: [&RigidBodyPosition; SIMD_WIDTH],
-        rbs2: (
-            [&RigidBodyMassProps; SIMD_WIDTH],
-            [&RigidBodyIds; SIMD_WIDTH],
-        ),
+        rbs1: [&RigidBody; SIMD_WIDTH],
+        rbs2: [&RigidBody; SIMD_WIDTH],
         cparams: [&FixedJoint; SIMD_WIDTH],
         flipped: [bool; SIMD_WIDTH],
     ) -> Self {
         Self {
-            constraints: gather![|ii| FixedPositionGroundConstraint::from_params(
-                rbs1[ii],
-                (rbs2.0[ii], rbs2.1[ii]),
-                cparams[ii],
-                flipped[ii]
-            )],
+            constraints: array![|ii| FixedPositionGroundConstraint::from_params(rbs1[ii], rbs2[ii], cparams[ii], flipped[ii]); SIMD_WIDTH],
         }
     }
 

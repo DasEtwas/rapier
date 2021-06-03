@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate kiss3d;
 extern crate nalgebra as na;
 #[cfg(feature = "dim2")]
 extern crate ncollide2d as ncollide;
@@ -23,19 +25,15 @@ extern crate bitflags;
 #[macro_use]
 extern crate log;
 
-pub use crate::graphics::GraphicsManager;
+pub use crate::engine::GraphicsManager;
 pub use crate::harness::plugin::HarnessPlugin;
 pub use crate::physics::PhysicsState;
 pub use crate::plugin::TestbedPlugin;
-pub use crate::testbed::{Testbed, TestbedApp, TestbedGraphics};
+pub use crate::testbed::Testbed;
 
 #[cfg(all(feature = "dim2", feature = "other-backends"))]
 mod box2d_backend;
-#[cfg(feature = "dim2")]
-mod camera2d;
-#[cfg(feature = "dim3")]
-mod camera3d;
-mod graphics;
+mod engine;
 pub mod harness;
 #[cfg(feature = "other-backends")]
 mod nphysics_backend;

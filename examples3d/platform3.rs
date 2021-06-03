@@ -1,4 +1,6 @@
-use rapier3d::prelude::*;
+use na::Point3;
+use rapier3d::dynamics::{JointSet, RigidBodyBuilder, RigidBodySet};
+use rapier3d::geometry::{ColliderBuilder, ColliderSet};
 use rapier_testbed3d::Testbed;
 
 pub fn init_world(testbed: &mut Testbed) {
@@ -16,11 +18,11 @@ pub fn init_world(testbed: &mut Testbed) {
     let ground_height = 0.1;
 
     let rigid_body = RigidBodyBuilder::new_static()
-        .translation(vector![0.0, -ground_height, 0.0])
+        .translation(0.0, -ground_height, 0.0)
         .build();
     let handle = bodies.insert(rigid_body);
     let collider = ColliderBuilder::cuboid(ground_size, ground_height, ground_size).build();
-    colliders.insert_with_parent(collider, handle, &mut bodies);
+    colliders.insert(collider, handle, &mut bodies);
 
     /*
      * Create the boxes
@@ -41,62 +43,49 @@ pub fn init_world(testbed: &mut Testbed) {
                 let z = k as f32 * shift - centerz;
 
                 // Build the rigid body.
-                let rigid_body = RigidBodyBuilder::new_dynamic()
-                    .translation(vector![x, y, z])
-                    .build();
+                let rigid_body = RigidBodyBuilder::new_dynamic().translation(x, y, z).build();
                 let handle = bodies.insert(rigid_body);
                 let collider = ColliderBuilder::cuboid(rad, rad, rad).build();
-                colliders.insert_with_parent(collider, handle, &mut bodies);
+                colliders.insert(collider, handle, &mut bodies);
             }
         }
     }
 
     /*
-     * Setup a velocity-based kinematic rigid body.
+     * Setup a kinematic rigid body.
      */
-    let platform_body = RigidBodyBuilder::new_kinematic_velocity_based()
-        .translation(vector![0.0, 1.5 + 0.8, -10.0 * rad])
+    let platform_body = RigidBodyBuilder::new_kinematic()
+        .translation(0.0, 1.5 + 0.8, -10.0 * rad)
         .build();
-    let velocity_based_platform_handle = bodies.insert(platform_body);
+    let platform_handle = bodies.insert(platform_body);
     let collider = ColliderBuilder::cuboid(rad * 10.0, rad, rad * 10.0).build();
-    colliders.insert_with_parent(collider, velocity_based_platform_handle, &mut bodies);
-
-    /*
-     * Setup a position-based kinematic rigid body.
-     */
-    let platform_body = RigidBodyBuilder::new_kinematic_position_based()
-        .translation(vector![0.0, 2.0 + 1.5 + 0.8, -10.0 * rad])
-        .build();
-    let position_based_platform_handle = bodies.insert(platform_body);
-    let collider = ColliderBuilder::cuboid(rad * 10.0, rad, rad * 10.0).build();
-    colliders.insert_with_parent(collider, position_based_platform_handle, &mut bodies);
+    colliders.insert(collider, platform_handle, &mut bodies);
 
     /*
      * Setup a callback to control the platform.
      */
     let mut count = 0;
-    testbed.add_callback(move |_, physics, _, run_state| {
+    testbed.add_callback(move |_, _, physics, _, run_state| {
         count += 1;
         if count % 100 > 50 {
             return;
         }
 
-        let velocity = vector![
-            0.0,
-            (run_state.time * 5.0).sin(),
-            run_state.time.sin() * 5.0
-        ];
+        if let Some(platform) = physics.bodies.get_mut(platform_handle) {
+            let mut next_pos = *platform.position();
 
-        // Update the velocity-based kinematic body by setting its velocity.
-        if let Some(platform) = physics.bodies.get_mut(velocity_based_platform_handle) {
-            platform.set_linvel(velocity, true);
-        }
+            let dt = 0.016;
+            next_pos.translation.vector.y += (run_state.time * 5.0).sin() * dt;
+            next_pos.translation.vector.z += run_state.time.sin() * 5.0 * dt;
 
-        // Update the position-based kinematic body by setting its next position.
-        if let Some(platform) = physics.bodies.get_mut(position_based_platform_handle) {
-            let mut next_tra = *platform.translation();
-            next_tra += velocity * physics.integration_parameters.dt;
-            platform.set_next_kinematic_translation(next_tra);
+            if next_pos.translation.vector.z >= rad * 10.0 {
+                next_pos.translation.vector.z -= dt;
+            }
+            if next_pos.translation.vector.z <= -rad * 10.0 {
+                next_pos.translation.vector.z += dt;
+            }
+
+            platform.set_next_kinematic_position(next_pos);
         }
     });
 
@@ -104,5 +93,10 @@ pub fn init_world(testbed: &mut Testbed) {
      * Run the simulation.
      */
     testbed.set_world(bodies, colliders, joints);
-    testbed.look_at(point![-10.0, 5.0, -10.0], Point::origin());
+    testbed.look_at(Point3::new(-10.0, 5.0, -10.0), Point3::origin());
+}
+
+fn main() {
+    let testbed = Testbed::from_builders(0, vec![("Kinematic body", init_world)]);
+    testbed.run()
 }

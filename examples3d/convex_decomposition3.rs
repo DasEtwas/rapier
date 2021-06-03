@@ -1,9 +1,10 @@
-use obj::raw::object::Polygon;
-use rapier3d::parry::bounding_volume;
-use rapier3d::prelude::*;
+use kiss3d::loader::obj;
+use na::{Point3, Translation3};
+use rapier3d::dynamics::{JointSet, RigidBodyBuilder, RigidBodySet};
+use rapier3d::geometry::{ColliderBuilder, ColliderSet, SharedShape};
+use rapier3d::parry::bounding_volume::{self, BoundingVolume};
 use rapier_testbed3d::Testbed;
-use std::fs::File;
-use std::io::BufReader;
+use std::path::Path;
 
 /*
  * NOTE: The `r` macro is only here to convert from f64 to the `N` scalar type.
@@ -24,11 +25,11 @@ pub fn init_world(testbed: &mut Testbed) {
     let ground_height = 0.1;
 
     let rigid_body = RigidBodyBuilder::new_static()
-        .translation(vector![0.0, -ground_height, 0.0])
+        .translation(0.0, -ground_height, 0.0)
         .build();
     let handle = bodies.insert(rigid_body);
     let collider = ColliderBuilder::cuboid(ground_size, ground_height, ground_size).build();
-    colliders.insert_with_parent(collider, handle, &mut bodies);
+    colliders.insert(collider, handle, &mut bodies);
 
     /*
      * Create the convex decompositions.
@@ -40,46 +41,48 @@ pub fn init_world(testbed: &mut Testbed) {
     let shift = 5.0f32;
 
     for (igeom, obj_path) in geoms.into_iter().enumerate() {
-        let deltas = Isometry::identity();
+        let deltas = na::one();
+        let mtl_path = Path::new("");
 
         let mut shapes = Vec::new();
         println!("Parsing and decomposing: {}", obj_path);
-        let input = BufReader::new(File::open(obj_path).unwrap());
+        let obj = obj::parse_file(&Path::new(&obj_path), &mtl_path, "");
 
-        if let Ok(model) = obj::raw::parse_obj(input) {
-            let mut vertices: Vec<_> = model
-                .positions
-                .iter()
-                .map(|v| point![v.0, v.1, v.2])
-                .collect();
-            use std::iter::FromIterator;
-            let indices: Vec<_> = model
-                .polygons
+        if let Ok(model) = obj {
+            let meshes: Vec<_> = model
                 .into_iter()
-                .flat_map(|p| match p {
-                    Polygon::P(idx) => idx.into_iter(),
-                    Polygon::PT(idx) => Vec::from_iter(idx.into_iter().map(|i| i.0)).into_iter(),
-                    Polygon::PN(idx) => Vec::from_iter(idx.into_iter().map(|i| i.0)).into_iter(),
-                    Polygon::PTN(idx) => Vec::from_iter(idx.into_iter().map(|i| i.0)).into_iter(),
-                })
+                .map(|mesh| mesh.1.to_trimesh().unwrap())
                 .collect();
 
             // Compute the size of the model, to scale it and have similar size for everything.
-            let aabb = bounding_volume::details::point_cloud_aabb(&deltas, &vertices);
-            let center = aabb.center();
+            let mut aabb =
+                bounding_volume::details::point_cloud_aabb(&deltas, &meshes[0].coords[..]);
+
+            for mesh in meshes[1..].iter() {
+                aabb.merge(&bounding_volume::details::point_cloud_aabb(
+                    &deltas,
+                    &mesh.coords[..],
+                ));
+            }
+
+            let center = aabb.center().coords;
             let diag = (aabb.maxs - aabb.mins).norm();
 
-            vertices
-                .iter_mut()
-                .for_each(|p| *p = (*p - center.coords) * 6.0 / diag);
+            for mut trimesh in meshes.into_iter() {
+                trimesh.translate_by(&Translation3::from(-center));
+                trimesh.scale_by_scalar(6.0 / diag);
 
-            let indices: Vec<_> = indices
-                .chunks(3)
-                .map(|idx| [idx[0] as u32, idx[1] as u32, idx[2] as u32])
-                .collect();
+                let vertices = trimesh.coords;
+                let indices: Vec<_> = trimesh
+                    .indices
+                    .unwrap_unified()
+                    .into_iter()
+                    .map(|idx| [idx.x, idx.y, idx.z])
+                    .collect();
 
-            let decomposed_shape = SharedShape::convex_decomposition(&vertices, &indices);
-            shapes.push(decomposed_shape);
+                let decomposed_shape = SharedShape::convex_decomposition(&vertices, &indices);
+                shapes.push(decomposed_shape);
+            }
 
             // let compound = SharedShape::compound(compound_parts);
 
@@ -88,14 +91,12 @@ pub fn init_world(testbed: &mut Testbed) {
                 let y = (igeom / width) as f32 * shift + 4.0;
                 let z = k as f32 * shift;
 
-                let body = RigidBodyBuilder::new_dynamic()
-                    .translation(vector![x, y, z])
-                    .build();
+                let body = RigidBodyBuilder::new_dynamic().translation(x, y, z).build();
                 let handle = bodies.insert(body);
 
                 for shape in &shapes {
                     let collider = ColliderBuilder::new(shape.clone()).build();
-                    colliders.insert_with_parent(collider, handle, &mut bodies);
+                    colliders.insert(collider, handle, &mut bodies);
                 }
             }
         }
@@ -105,7 +106,7 @@ pub fn init_world(testbed: &mut Testbed) {
      * Set up the testbed.
      */
     testbed.set_world(bodies, colliders, joints);
-    testbed.look_at(point![100.0, 100.0, 100.0], Point::origin());
+    testbed.look_at(Point3::new(100.0, 100.0, 100.0), Point3::origin());
 }
 
 fn models() -> Vec<String> {
@@ -121,7 +122,7 @@ fn models() -> Vec<String> {
         "media/models/hornbug.obj".to_string(),
         "media/models/octopus_decimated.obj".to_string(),
         "media/models/rabbit_decimated.obj".to_string(),
-        // "media/models/rust_logo.obj".to_string(),
+        "media/models/rust_logo.obj".to_string(),
         "media/models/rust_logo_simplified.obj".to_string(),
         "media/models/screwdriver_decimated.obj".to_string(),
         "media/models/table.obj".to_string(),
